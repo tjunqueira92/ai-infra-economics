@@ -131,6 +131,7 @@
   .genpill{font-family:var(--mono);font-size:11px;padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:#0E141C;color:var(--txt2);cursor:pointer}
   .genpill:hover{border-color:#3a4a5c;color:var(--txt)}
   .genpill.active{border-color:var(--cy);color:var(--cy);background:rgba(54,197,240,.12)}
+  .genpill.active.diverged{border-style:dashed;color:var(--yellow);border-color:var(--yellow)}
   .coh{padding:7px 16px;font-size:12px;line-height:1.45;border-bottom:1px solid var(--border);background:rgba(229,72,77,.10);color:#e8bcbc}
   .coh b{color:var(--red)}
   .scenpills{display:inline-flex;gap:4px;margin-left:6px;vertical-align:middle}
@@ -437,7 +438,7 @@ if (typeof document!=='undefined') (function(){
     HM.cells.forEach(row=>row.forEach(cell=>{
       cell.rect.addEventListener('click',()=>{
         if(kindRowKey==='P'){ if(!dualLock){dualLock=true;applyLock();} setVal('P',cell.rv,true); setVal('U',cell.cv,true); }
-        else { if(dualLock){dualLock=false;applyLock();} setVal('C',cell.rv,true); setVal('T',cell.cv,true); }
+        else { if(dualLock){dualLock=false;applyLock();flashDual();} setVal('C',cell.rv,true); setVal('T',cell.cv,true); }
       });
       cell.rect.addEventListener('mousemove',ev=>showTip(ev,HM===HM1
         ? `P ${usd2(cell.rv)} · util ${Math.round(cell.cv*100)}%\nROIC ${pct1(cell._v)}`
@@ -668,9 +669,15 @@ if (typeof document!=='undefined') (function(){
   }
   function renderCoherence(){
     const W=coherenceWarnings(), box=E('coh');
+    const div=W.some(w=>/fora da faixa|abaixo|acima/.test(w));
+    [...E('genpills').children].forEach(b=>b.classList.toggle('diverged',div&&b.dataset.gen===selectedGen));
     if(!W.length){box.style.display='none';return;}
     box.style.display='block';
     box.innerHTML='<b>⚠ Coerência ('+selectedGen+'):</b> '+W.join(' · ');
+  }
+  function flashDual(){
+    const t=E('dualToggle'); t.style.outline='2px solid var(--amber)'; t.style.borderRadius='6px';
+    setTimeout(()=>{t.style.outline='';},800);
   }
 
   // ==================== v2: LAB EM CAMADAS + REALITY CHECK $/GW ====================
@@ -738,6 +745,36 @@ if (typeof document!=='undefined') (function(){
     }
     return {rows, irr:irr(cfs), npv:npv(DISC,cfs), econ, acct, residual};
   }
+  function mcCohort(nDraws){
+    // Monte Carlo determinístico (LCG seed fixa -> display estável): amostra as FAIXAS
+    // calibradas da geração/lessor (triangular), trajetória do cenário selecionado
+    let s=42>>>0; const rnd=()=>{s=(Math.imul(s,1664525)+1013904223)>>>0; return s/4294967296;};
+    const tri=(lo,hi,mode)=>{mode=Math.min(Math.max(mode,lo),hi);const u=rnd(),c=(mode-lo)/(hi-lo);
+      return u<c? lo+Math.sqrt(u*(hi-lo)*(mode-lo)) : hi-Math.sqrt((1-u)*(hi-lo)*(hi-mode));};
+    const G=GEN[selectedGen], sc=SCEN[selectedScen], irrs=[];
+    for(let i=0;i<nDraws;i++){
+      const P0=tri(G.Pr[0],G.Pr[1],G.Pc), I=tri(G.Ir[0],G.Ir[1],G.I), kw=tri(G.kwr[0],G.kwr[1],G.kw);
+      const u1=tri(0.55,0.90,0.82), uPm=Math.max(u1,tri(0.60,0.95,0.85));
+      const e=tri(0.055,0.11,0.08), op=tri(0.08,0.22,0.15), tax=tri(0.15,0.20,0.17);
+      const acct=G.life, econ=Math.min(G.econ, sc.el||G.econ), dep=I/acct;
+      const residual=Math.max(0,I*(1-Math.min(econ,acct)/acct));
+      const cfs=[-I];
+      for(let t=1;t<=econ;t++){
+        const P=P0*Math.pow(1-sc.pdec,t-1), u=Math.max(0,u1-sc.udec*(t-1));
+        const upt=Math.max(u,Math.min(uPm,u+(uPm-u1)));
+        const rec=P*8760*u, en=kw*8760*upt*e, opx=rec*op;
+        const ebit=rec-(t<=acct?dep:0)-en-opx;
+        let cf=ebit*(1-tax)+(t<=acct?dep:0);
+        if(t===econ&&residual>0)cf+=tax*residual;
+        cfs.push(cf);
+      }
+      const r=irr(cfs); if(r!=null)irrs.push(r);
+    }
+    irrs.sort((a,b)=>a-b);
+    const q=p=>irrs.length?irrs[Math.floor(p*(irrs.length-1))]:null;
+    return {p10:q(0.10),p50:q(0.50),p90:q(0.90),
+            pneg:irrs.length?irrs.filter(x=>x<0).length/irrs.length:null,n:irrs.length};
+  }
   function renderCohort(){
     const all={}; Object.keys(SCEN).forEach(s=>{all[s]=cohortFor(s);});
     const co=all[selectedScen], svg=E('cohort'); svg.innerHTML='';
@@ -762,9 +799,11 @@ if (typeof document!=='undefined') (function(){
       const vt=el('text',{x:x(r.t),y:y(r.roic)-6,'text-anchor':'middle',fill:r.roic<0?'var(--red)':'#9fd9ef','font-size':8.5,'font-family':'var(--mono)'});vt.textContent=(r.roic*100).toFixed(0)+'%';svg.appendChild(vt);
     });
     const trio=Object.keys(SCEN).map(s=>{const v=all[s].irr; const t=`${s} ${v==null?'n/a':pct1(v)}`; return s===selectedScen?`<b>${t}</b>`:t;}).join(' · ');
+    const mc=mcCohort(400);
     E('cohortMeta').innerHTML=`<b>${selectedGen}</b> · coorte ${co.econ}a (ano-1 = sliders) · IRR: ${trio} · NPV@${Math.round(DISC*100)}% ${usd0(co.npv)}`
       +(co.residual>1?` · <span style="color:var(--red)">writeoff ${usd0(co.residual)} (econ ${co.econ}a &lt; contábil ${co.acct}a, shield fiscal no ano final)</span>`:'')
-      +`. ROIC ano-1 ≠ IRR de coorte (foto de pico vs ciclo).`;
+      +`. ROIC ano-1 ≠ IRR de coorte (foto de pico vs ciclo).`
+      +(mc.p50!=null?`<br><b>Monte Carlo</b> (${mc.n}×, faixas calibradas, cenário ${selectedScen}): IRR P10 ${pct1(mc.p10)} · P50 ${pct1(mc.p50)} · P90 ${pct1(mc.p90)} · <span style="color:${mc.pneg>0.5?'var(--red)':'var(--txt)'}">P(IRR&lt;0) ${pct1(mc.pneg)}</span>`:'');
   }
 
   // ==================== v2: TORNADO (ranking de alavancas) ====================
