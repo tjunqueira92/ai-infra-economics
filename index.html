@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Infra Economics — $/GPU-hora</title>
+<style>
+  :root{
+    --bg:#0B0F14; --panel:#121821; --border:#1E2A38; --txt:#E6EDF3; --txt2:#8B9AA8;
+    --cy:#36C5F0; --amber:#F5A623; --green:#2ECC71; --yellow:#F4C430; --red:#E5484D;
+    --aws:#FF9900; --cursor:#FFFFFF;
+    --mono:ui-monospace,'JetBrains Mono','SF Mono',Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--txt);font-family:var(--sans);font-size:14px;overflow:hidden}
+  .app{display:grid;grid-template-rows:auto auto 1fr;height:100vh}
+
+  /* ---- COMMAND BAR ---- */
+  .cmd{display:flex;align-items:center;gap:14px;padding:8px 16px;background:#0E141C;border-bottom:1px solid var(--border);min-height:56px;flex-wrap:wrap}
+  .brand{display:flex;flex-direction:column;line-height:1.1;margin-right:6px}
+  .brand b{font-size:15px;letter-spacing:.5px}
+  .brand small{color:var(--txt2);font-size:11px}
+  .presets{display:flex;gap:6px;flex-wrap:wrap;flex:1}
+  .pill{font-family:var(--mono);font-size:11.5px;padding:5px 9px;border:1px solid var(--border);border-radius:14px;background:#0E141C;color:var(--txt2);cursor:pointer;white-space:nowrap;transition:.15s}
+  .pill:hover{border-color:#3a4a5c;color:var(--txt)}
+  .pill.active{border-color:#fff;color:#fff;background:#1a2330}
+  .pill.aws{border-color:#5a4520;color:var(--aws)}
+  .pill.aws.active{border-color:var(--aws);background:#2a2010}
+  .cmd-right{display:flex;align-items:center;gap:10px}
+  .toggle{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);cursor:pointer;user-select:none}
+  .toggle .sw{width:34px;height:18px;border-radius:10px;background:#2a3a4c;position:relative;transition:.2s}
+  .toggle .sw::after{content:'';position:absolute;width:14px;height:14px;border-radius:50%;background:#fff;top:2px;left:2px;transition:.2s}
+  .toggle.on .sw{background:var(--cy)}
+  .toggle.on .sw::after{left:18px}
+  .chip{font-family:var(--mono);font-size:11.5px;padding:5px 9px;border-radius:6px;font-weight:600}
+  .btn{font-size:12px;padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:#0E141C;color:var(--txt);cursor:pointer}
+  .btn:hover{border-color:#3a4a5c}
+
+  /* ---- VEREDITO ---- */
+  .veredito{padding:9px 16px;font-size:13.5px;border-bottom:1px solid var(--border);transition:background .25s;line-height:1.35}
+  .veredito b{font-weight:600}
+
+  /* ---- BODY GRID ---- */
+  .body{display:grid;grid-template-columns:300px 1fr 452px;overflow:hidden;min-height:0}
+  .col{overflow-y:auto;padding:14px;min-height:0}
+  .col.controls{border-right:1px solid var(--border)}
+  .col.heat{border-left:1px solid var(--border)}
+  .col::-webkit-scrollbar{width:8px}
+  .col::-webkit-scrollbar-thumb{background:#243140;border-radius:4px}
+
+  /* ---- CONTROLS ---- */
+  .grp-title{font-size:11px;letter-spacing:1px;text-transform:uppercase;font-weight:700;padding:6px 8px;border-radius:5px;margin:4px 0 10px}
+  .grp-hyper{color:var(--cy);background:rgba(54,197,240,.08)}
+  .grp-lab{color:var(--amber);background:rgba(245,166,35,.08);margin-top:18px}
+  .ctrl{margin-bottom:13px}
+  .ctrl .lab{display:flex;justify-content:space-between;align-items:baseline;font-size:11.5px;color:var(--txt2);margin-bottom:3px}
+  .ctrl .lab .delta{font-family:var(--mono);font-size:10.5px;color:#7e8e9d}
+  .ctrl .row{display:flex;align-items:center;gap:8px}
+  .ctrl input[type=range]{flex:1;accent-color:var(--cy);height:4px}
+  .grp-lab ~ .ctrl input[type=range], .ctrl.lab-c input[type=range]{accent-color:var(--amber)}
+  .ctrl input[type=number]{width:74px;background:#0B1119;border:1px solid var(--border);color:var(--txt);font-family:var(--mono);font-size:12px;padding:4px 6px;border-radius:5px;text-align:right}
+  .ctrl.locked{opacity:.5}
+  .ctrl.locked input{pointer-events:none}
+  .lockbadge{font-size:10px;color:var(--amber);cursor:pointer}
+
+  /* ---- CENTER ---- */
+  .mirror{display:grid;grid-template-columns:1fr 92px 1fr;gap:0;align-items:stretch;margin-bottom:14px}
+  .kcard{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+  .kcard.hyper{border-top:3px solid var(--cy)}
+  .kcard.lab{border-top:3px solid var(--amber)}
+  .kcard h3{margin:0 0 2px;font-size:12px;letter-spacing:.5px;text-transform:uppercase;color:var(--txt2)}
+  .kcard h3 .who{color:var(--txt)}
+  .big{font-family:var(--mono);font-size:46px;font-weight:600;line-height:1.05;font-variant-numeric:tabular-nums;margin:6px 0 2px}
+  .big.cy{color:var(--cy)} .big.am{color:var(--amber)}
+  .sub{font-family:var(--mono);font-size:12.5px;color:var(--txt2);display:flex;justify-content:space-between;padding:2px 0;font-variant-numeric:tabular-nums}
+  .sub span:last-child{color:var(--txt)}
+  .divider{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--txt2)}
+  .divider .price{font-family:var(--mono);font-size:22px;font-weight:700;color:#fff}
+  .divider .price small{font-size:10px;color:var(--txt2);display:block;text-align:center}
+  .divider .arrow{font-size:11px;font-family:var(--mono)}
+  .divider .arrow.r{color:var(--cy)} .divider .arrow.l{color:var(--amber)}
+  .divider .bar{width:2px;flex:1;background:linear-gradient(var(--cy),var(--amber));border-radius:2px;min-height:30px;transition:width .2s}
+
+  .viz{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:14px}
+  .viz h4{margin:0 0 6px;font-size:12px;color:var(--txt2);font-weight:600;letter-spacing:.3px}
+  .viz svg{width:100%;height:auto;display:block}
+
+  /* ---- HEATMAPS ---- */
+  .heat h4{margin:2px 0 4px;font-size:12px;color:var(--txt);font-weight:600}
+  .heat h4 small{color:var(--txt2);font-weight:400}
+  .hm{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:8px;margin-bottom:14px}
+  .hm svg{width:100%;height:auto;display:block}
+  .cell{cursor:pointer}
+  .cell:hover{stroke:#fff;stroke-width:1}
+  .cellval{font-family:var(--mono);font-size:8.5px;fill:#0B0F14;pointer-events:none;font-variant-numeric:tabular-nums}
+  .cursor{fill:none;stroke:var(--cursor);stroke-width:2.5;pointer-events:none}
+  .pulse{animation:pulse 1.2s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .axlab{font-family:var(--mono);font-size:9.5px;fill:var(--txt2)}
+  .axtitle{font-size:10.5px;fill:var(--txt2)}
+
+  /* ---- AWS CARD ---- */
+  .aws-card{margin-top:4px;border:1px solid #5a4520;border-radius:10px;background:#141008;overflow:hidden}
+  .aws-card summary{cursor:pointer;padding:10px 14px;font-weight:600;color:var(--aws);font-size:13px;list-style:none}
+  .aws-card summary::-webkit-details-marker{display:none}
+  .aws-card[open] summary{border-bottom:1px solid #3a2e15}
+  .aws-body{padding:12px 14px;font-size:12.5px;line-height:1.5}
+  .aws-body table{width:100%;border-collapse:collapse;margin-bottom:10px;font-family:var(--mono);font-size:11.5px}
+  .aws-body td,.aws-body th{padding:3px 6px;border-bottom:1px solid #2a2110;text-align:left}
+  .aws-body th{color:var(--aws);font-size:10.5px;text-transform:uppercase;letter-spacing:.5px}
+  .reading{background:rgba(255,153,0,.07);border-left:3px solid var(--aws);padding:8px 10px;border-radius:4px;margin:8px 0}
+  .ponte{color:var(--txt2);font-style:italic;font-size:12px;margin-top:6px}
+  details.meth{margin-top:8px}
+  details.meth summary{color:var(--txt2);font-size:11.5px;padding:4px 0}
+  .meth code{font-family:var(--mono);font-size:11px;color:var(--cy);display:block;padding:2px 0}
+  .disc{color:#9a8556;font-size:10.5px;margin-top:6px}
+  .tip{position:fixed;pointer-events:none;background:#000;border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-family:var(--mono);font-size:11px;color:#fff;z-index:50;opacity:0;transition:opacity .1s;max-width:240px;line-height:1.4}
+  @media (max-width:1280px){
+    html,body{overflow:auto}
+    .app{height:auto}
+    .body{grid-template-columns:1fr;overflow:visible}
+    .col{overflow:visible}
+    .col.controls{border-right:none;border-bottom:1px solid var(--border)}
+    .col.heat{border-left:none;border-top:1px solid var(--border)}
+    .mirror{grid-template-columns:1fr 70px 1fr}
+    .big{font-size:38px}
+  }
+  .genbar{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:12px}
+  .genpill{font-family:var(--mono);font-size:11px;padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:#0E141C;color:var(--txt2);cursor:pointer}
+  .genpill:hover{border-color:#3a4a5c;color:var(--txt)}
+  .genpill.active{border-color:var(--cy);color:var(--cy);background:rgba(54,197,240,.12)}
+  .coh{padding:7px 16px;font-size:12px;line-height:1.45;border-bottom:1px solid var(--border);background:rgba(229,72,77,.10);color:#e8bcbc}
+  .coh b{color:var(--red)}
+  .scenpills{display:inline-flex;gap:4px;margin-left:6px;vertical-align:middle}
+  .scenpill{font-family:var(--mono);font-size:10px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;background:#0E141C;color:var(--txt2);cursor:pointer}
+  .scenpill.active{border-color:#fff;color:#fff}
+  .layrow{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11.5px;margin:4px 0;font-variant-numeric:tabular-nums}
+  .layrow .lname{flex:1;color:var(--txt2)}
+  .layrow .laybar{height:13px;border-radius:3px;flex:none}
+  .layrow .lval{width:54px;text-align:right;color:var(--txt)}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- COMMAND BAR -->
+  <div class="cmd">
+    <div class="brand"><b>AI INFRA ECONOMICS // $/GPU-HORA</b><small>ROIC do hyperscaler vs margem do AI lab</small></div>
+    <div class="presets" id="presets"></div>
+    <div class="cmd-right">
+      <div class="toggle on" id="dualToggle"><span class="sw"></span><span>Dualidade C=P</span></div>
+      <span class="chip" id="chipRoic">ROIC ?</span>
+      <button class="btn" id="btnReset" title="Atalho: R">Resetar</button>
+      <button class="btn" id="btnCopy">Copiar JSON</button>
+    </div>
+  </div>
+
+  <!-- VEREDITO -->
+  <div class="veredito" id="veredito"></div>
+  <div class="coh" id="coh" style="display:none"></div>
+
+  <!-- BODY -->
+  <div class="body">
+    <!-- CONTROLES -->
+    <div class="col controls">
+      <div class="grp-title" style="color:var(--txt);background:rgba(255,255,255,.05)">Geração (preset coerente)</div>
+      <div id="genpills" class="genbar"></div>
+      <div class="grp-title grp-hyper">Hyperscaler (dono da infra)</div>
+      <div id="ctrls-hyper"></div>
+      <div class="grp-title grp-lab">AI Lab (consome compute)</div>
+      <div id="ctrls-lab"></div>
+    </div>
+
+    <!-- MIOLO -->
+    <div class="col center">
+      <div class="mirror">
+        <div class="kcard hyper">
+          <h3>Hyperscaler · <span class="who">ROIC</span></h3>
+          <div class="big cy" id="k_roic">—</div>
+          <div class="sub"><span>EBIT/GPU/ano</span><span id="k_ebit">—</span></div>
+          <div class="sub"><span>Margem EBIT</span><span id="k_margemEbit">—</span></div>
+          <div class="sub"><span>Receita/GPU/ano</span><span id="k_receita">—</span></div>
+          <div class="sub"><span>(−) Depreciação</span><span id="k_deprec">—</span></div>
+          <div class="sub"><span>(−) Energia</span><span id="k_energia">—</span></div>
+          <div class="sub"><span>(−) Opex</span><span id="k_opex">—</span></div>
+        </div>
+        <div class="divider">
+          <div class="arrow r">RECEITA →</div>
+          <div class="bar" id="divbar"></div>
+          <div class="price" id="k_price">—<small>$/GPU-h</small></div>
+          <div class="bar" id="divbar2"></div>
+          <div class="arrow l">← CUSTO</div>
+        </div>
+        <div class="kcard lab">
+          <h3>AI Lab · <span class="who">Margem compute-only (saída)*</span></h3>
+          <div class="big am" id="k_margem">—</div>
+          <div class="sub"><span>Custo / Mtok</span><span id="k_cost">—</span></div>
+          <div class="sub"><span>Lucro bruto / Mtok</span><span id="k_lucro">—</span></div>
+          <div class="sub"><span>Preço de venda / Mtok</span><span id="k_S">—</span></div>
+          <div class="sub"><span>Throughput</span><span id="k_T">—</span></div>
+          <div class="sub"><span>Custo GPU-hora</span><span id="k_C">—</span></div>
+        </div>
+      </div>
+
+      <div class="viz"><h4>Cascata de P&amp;L por GPU/ano — onde a receita vira NOPAT</h4><svg id="wf" viewBox="0 0 480 250"></svg></div>
+      <div class="viz"><h4>Cadeia de valor de cada $/Mtok vendido — quem fica com a margem</h4><svg id="chain" viewBox="0 0 480 96"></svg></div>
+      <div class="viz"><h4>Termômetro de breakeven — ROIC = 0 do hyperscaler</h4><svg id="thermo" viewBox="0 0 480 72"></svg></div>
+      <div class="viz"><h4>Coorte / vintage — ROIC por ano <span class="scenpills" id="scenpills"></span></h4><svg id="cohort" viewBox="0 0 480 168"></svg><div id="cohortMeta" style="font-size:11px;color:var(--txt2);margin-top:4px"></div></div>
+      <div class="viz"><h4>* Margem do lab em camadas — nunca "93% = margem do lab"</h4><div id="layers"></div></div>
+
+      <details class="aws-card" id="awsCard">
+        <summary>📊 Exemplo AWS (jun/2026) — clique para calibrar com números reais</summary>
+        <div class="aws-body">
+          <table>
+            <tr><th>AWS real (aprox. jun/2026)</th><th>No modelo (GPU isolada, ao vivo)</th></tr>
+            <tr><td>Cloud run-rate <b>$150B</b> (+28% a/a)</td><td>Receita/GPU/ano: <span id="aws_rev">—</span></td></tr>
+            <tr><td>Op. income $14,16B/tri (~$56,6B/ano)</td><td>EBIT/GPU/ano: <span id="aws_ebit">—</span></td></tr>
+            <tr><td>Margem operacional ~<b>38%</b> (toda a nuvem)</td><td>Margem EBIT (GPU pura): <span id="aws_mebit">—</span></td></tr>
+            <tr><td>Capex 2026 ~$200B</td><td>ROIC da GPU: <span id="aws_roic">—</span></td></tr>
+            <tr><td>H100 on-demand list ~$7/h</td><td>Margem do lab ao pagar P: <span id="aws_lab">—</span></td></tr>
+            <tr><td>H100 reservado/blended ~$2,5/h · spot neocloud ~$1,0–1,4/h · mediana ~$2,3–3,1/h · H200 ~$4 · B200 ~$5–18</td><td></td></tr>
+          </table>
+          <div class="reading" id="aws_reading"></div>
+          <div class="ponte">A margem operacional reportada da AWS (~38%) inclui o mix maduro de serviços de nuvem; ela <b>não</b> se traduz no ROIC magro de uma GPU pura no preço blended. O dono da infra só ganha de verdade quando cobra perto do on-demand — e aí o lab é quem sente.</div>
+          <details class="meth"><summary>Metodologia / fórmulas</summary>
+            <code>Hyper: receita=P·8760·U · deprec=I/vida · energia=kW·8760·U·$kWh · opex=receita·opex% · EBIT=receita−deprec−energia−opex · NOPAT=EBIT·(1−imposto) · ROIC=NOPAT/I</code>
+            <code>Lab: custo/Mtok = C·1e6/(T·3600) · margem=(S−custo)/S</code>
+            <code>Breakeven: P* = (I/vida + kW·8760·U·$kWh) / (8760·U·(1−opex%))</code>
+          </details>
+          <div class="disc">Estimativas ilustrativas; dados de mercado aprox. jun/2026. Modela uma GPU isolada — não os resultados consolidados da AWS. Preço de lista ≠ preço realizado (utilização real é em burst).</div>
+        </div>
+      </details>
+    </div>
+
+    <!-- HEATMAPS -->
+    <div class="col heat">
+      <div class="heat">
+        <h4>ROIC do hyperscaler <small>— P (↕) × utilização (↔). Sobe com P.</small></h4>
+        <div class="hm"><svg id="hm1" viewBox="0 0 430 300"></svg></div>
+        <h4>Margem do AI lab <small>— custo $/h (↕) × throughput (↔). Cai com o custo.</small></h4>
+        <div class="hm"><svg id="hm2" viewBox="0 0 430 300"></svg></div>
+        <div style="font-size:11px;color:var(--txt2);line-height:1.5">
+          O cursor branco marca o cenário atual. Pela dualidade, subir o $/GPU-hora desliza o cursor de cima <b style="color:var(--cy)">para o verde</b> e o de baixo <b style="color:var(--amber)">para o vermelho</b> — o ganho da infra é a dor do lab. Clique numa célula para puxá-la aos controles.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="tip" id="tip"></div>
+
+<script>
+"use strict";
+// =================== MODEL START =================== (verificável via Node)
+function hyper(s){
+  const uPow = (s.uPower!=null ? s.uPower : s.U);   // U_power separado de U_sold (default: segue U)
+  const receita = s.P*8760*s.U;
+  const deprec  = s.I/s.life;
+  const energia = s.kw*8760*uPow*s.e;
+  const opex    = receita*s.opex;
+  const ebit    = receita - deprec - energia - opex;
+  const nopat   = ebit*(1-s.tax);
+  const roic    = s.I ? nopat/s.I : 0;
+  return {receita,deprec,energia,opex,ebit,nopat,roic, margemEbit: receita? ebit/receita : 0};
+}
+function lab(s){
+  const cost = s.C*1e6/(s.T*3600);
+  const margem = s.S ? (s.S-cost)/s.S : 0;
+  return {cost, margem, lucro: s.S-cost};
+}
+function breakevenP(s){
+  return (s.I/s.life + s.kw*8760*s.U*s.e) / (8760*s.U*(1-s.opex));
+}
+// =================== MODEL END ===================
+if (typeof module!=='undefined' && module.exports){ module.exports={hyper,lab,breakevenP}; }
+
+if (typeof document!=='undefined') (function(){
+  const SVGNS="http://www.w3.org/2000/svg";
+  const BASE = {P:2.65,U:0.82,uPower:0.85,I:50000,life:5,kw:1.22,e:0.08,opex:0.15,tax:0.17,C:2.65,T:750,S:15,rf:0.66,sof:0.45,htm:1.0};
+  let state = {...BASE};
+  let dualLock = true;
+
+  // ---- formatação PT-BR ----
+  const nf0=new Intl.NumberFormat('pt-BR',{maximumFractionDigits:0});
+  const nf2=new Intl.NumberFormat('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const usd0=v=>(v<0?'-$':'$')+nf0.format(Math.abs(Math.round(v)));
+  const usd2=v=>(v<0?'-$':'$')+nf2.format(Math.abs(v));
+  const pct1=v=>(v*100).toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1})+'%';
+  const E=id=>document.getElementById(id);
+  const el=(t,a)=>{const n=document.createElementNS(SVGNS,t);for(const k in a)n.setAttribute(k,a[k]);return n;};
+
+  // ---- color ramp (igual ao .xlsx) ----
+  function ramp(v,lo,mid,hi){
+    const c1=[0xF8,0x69,0x6B],c2=[0xFF,0xEB,0x84],c3=[0x63,0xBE,0x7B];
+    let from,to,t;
+    if(v<=mid){from=c1;to=c2;t=(v-lo)/(mid-lo);} else {from=c2;to=c3;t=(v-mid)/(hi-mid);}
+    t=Math.max(0,Math.min(1,t));
+    const r=Math.round(from[0]+(to[0]-from[0])*t),g=Math.round(from[1]+(to[1]-from[1])*t),b=Math.round(from[2]+(to[2]-from[2])*t);
+    return `rgb(${r},${g},${b})`;
+  }
+
+  // ---- CONTROLES ----
+  const CTRLS=[
+    {k:'P',g:'hyper',lab:'P · Preço GPU-hora ($/h)',min:0.5,max:8,step:0.05,fmt:usd2,acc:'var(--cy)'},
+    {k:'U',g:'hyper',lab:'U_sold · Utilização vendida (receita)',min:0.3,max:1,step:0.01,fmt:pct1,acc:'var(--cy)'},
+    {k:'uPower',g:'hyper',lab:'U_power · Util. de energia (runtime)',min:0.3,max:1,step:0.01,fmt:pct1,acc:'var(--cy)'},
+    {k:'I',g:'hyper',lab:'Capital investido / GPU ($)',min:20000,max:110000,step:1000,fmt:usd0,acc:'var(--cy)'},
+    {k:'life',g:'hyper',lab:'Vida de depreciação (anos)',min:2,max:8,step:1,fmt:v=>v+'a',acc:'var(--cy)'},
+    {k:'kw',g:'hyper',lab:'Potência efetiva (kW/GPU)',min:0.5,max:2.5,step:0.1,fmt:v=>nf2.format(v)+' kW',acc:'var(--cy)'},
+    {k:'e',g:'hyper',lab:'Energia ($/kWh)',min:0.03,max:0.25,step:0.01,fmt:usd2,acc:'var(--cy)'},
+    {k:'opex',g:'hyper',lab:'Opex (% da receita)',min:0,max:0.4,step:0.01,fmt:pct1,acc:'var(--cy)'},
+    {k:'tax',g:'hyper',lab:'Alíquota de imposto',min:0,max:0.4,step:0.01,fmt:pct1,acc:'var(--cy)'},
+    {k:'C',g:'lab',lab:'Custo GPU-hora p/ lab ($/h)',min:0.5,max:8,step:0.05,fmt:usd2,acc:'var(--amber)',lock:true},
+    {k:'T',g:'lab',lab:'Throughput vendável (tok/s/GPU)',min:50,max:2000,step:10,fmt:v=>nf0.format(v),acc:'var(--amber)'},
+    {k:'S',g:'lab',lab:'S · Preço de venda lista ($/Mtok)',min:1,max:40,step:0.5,fmt:usd2,acc:'var(--amber)'},
+    {k:'rf',g:'lab',lab:'Realização (net/lista)',min:0.3,max:1,step:0.01,fmt:pct1,acc:'var(--amber)'},
+    {k:'sof',g:'lab',lab:'Fração vendável (serving overhead)',min:0.2,max:1,step:0.01,fmt:pct1,acc:'var(--amber)'},
+    {k:'htm',g:'lab',lab:'Mult. tokens ocultos (API=1)',min:1,max:4,step:0.1,fmt:v=>nf2.format(v)+'×',acc:'var(--amber)'},
+  ];
+  const refs={};
+  CTRLS.forEach(c=>{
+    const wrap=document.createElement('div');
+    wrap.className='ctrl'+(c.lock?' lab-c':'');
+    wrap.innerHTML=`<div class="lab"><span>${c.lab}${c.lock?' <span class="lockbadge" id="lk_C">🔒</span>':''}</span><span class="delta" id="d_${c.k}"></span></div>
+      <div class="row"><input type="range" id="r_${c.k}" min="${c.min}" max="${c.max}" step="${c.step}" value="${BASE[c.k]}" style="accent-color:${c.acc}">
+      <input type="number" id="n_${c.k}" min="${c.min}" max="${c.max}" step="${c.step}" value="${BASE[c.k]}"></div>`;
+    E(c.g==='hyper'?'ctrls-hyper':'ctrls-lab').appendChild(wrap);
+    refs[c.k]={cfg:c,wrap,r:wrap.querySelector('#r_'+c.k),n:wrap.querySelector('#n_'+c.k)};
+    const clamp=v=>Math.max(c.min,Math.min(c.max,v));
+    refs[c.k].r.addEventListener('input',ev=>{const v=parseFloat(ev.target.value); if(isNaN(v))return; setVal(c.k,clamp(v),true);});
+    // número: durante a digitação atualiza o modelo sem reescrever o próprio campo (não atropela o caret); normaliza no blur
+    refs[c.k].n.addEventListener('input',ev=>{const raw=parseFloat(ev.target.value); if(isNaN(raw))return; setVal(c.k,clamp(raw),true,true);});
+    refs[c.k].n.addEventListener('change',ev=>{let v=parseFloat(ev.target.value); if(isNaN(v))v=BASE[c.k]; setVal(c.k,clamp(v),true);});
+  });
+
+  function setVal(k,v,fromUser,skipNumWrite){
+    state[k]=v;
+    refs[k].r.value=v; if(!skipNumWrite) refs[k].n.value=v;
+    if(k==='P' && dualLock){ state.C=v; refs.C.r.value=v; refs.C.n.value=v; }
+    if(fromUser) clearActivePreset();
+    render();
+  }
+
+  // ---- dual lock ----
+  function applyLock(){
+    refs.C.wrap.classList.toggle('locked',dualLock);
+    E('dualToggle').classList.toggle('on',dualLock);
+    if(dualLock){ state.C=state.P; refs.C.r.value=state.P; refs.C.n.value=state.P; }
+    E('dualToggle').querySelector('span:last-child').textContent = dualLock?'Dualidade C=P':'DUALIDADE OFF';
+    const lk=document.getElementById('lk_C'); if(lk) lk.textContent = dualLock?'🔒':'🔓';
+  }
+  E('dualToggle').addEventListener('click',()=>{dualLock=!dualLock;applyLock();render();});
+  (function(){const lk=document.getElementById('lk_C'); if(lk) lk.addEventListener('click',e=>{e.stopPropagation();dualLock=!dualLock;applyLock();render();});})();
+
+  // ---- PRESETS ----
+  const PRESETS=[   // pontos de PREÇO na geração H100; a geração em si vem das pills "Geração"
+    {n:'Base H100 $2,65',aws:false,s:{...BASE}},
+    {n:'Neocloud spot $1,3',aws:false,s:{...BASE,P:1.3,C:1.3}},
+    {n:'AWS reservado $2,5',aws:true,s:{...BASE,P:2.5,C:2.5}},
+    {n:'Mediana on-demand $3,0',aws:false,s:{...BASE,P:3.0,C:3.0}},
+    {n:'AWS on-demand $7',aws:true,s:{...BASE,P:7,C:7}},
+  ];
+  let activePreset=-1;
+  PRESETS.forEach((p,i)=>{
+    const b=document.createElement('button');
+    b.className='pill'+(p.aws?' aws':''); b.textContent=p.n;
+    b.addEventListener('click',()=>applyPreset(i));
+    E('presets').appendChild(b);
+  });
+  function applyPreset(i){
+    const p=PRESETS[i];
+    if(!dualLock){dualLock=true;applyLock();}
+    state={...state,...p.s};
+    CTRLS.forEach(c=>{refs[c.k].r.value=state[c.k];refs[c.k].n.value=state[c.k];});
+    activePreset=i; paintPresets();
+    selectedGen='H100'; paintGen();   // presets de preço são todos geração H100
+    if(p.aws) E('awsCard').open=true;
+    render();
+  }
+  function clearActivePreset(){activePreset=-1;paintPresets();}
+  function paintPresets(){[...E('presets').children].forEach((b,i)=>b.classList.toggle('active',i===activePreset));}
+
+  E('btnReset').addEventListener('click',()=>applyPreset(0));
+  document.addEventListener('keydown',e=>{if((e.key==='r'||e.key==='R')&&!/INPUT|TEXTAREA/.test(document.activeElement.tagName))applyPreset(0);});
+  E('btnCopy').addEventListener('click',()=>{
+    const h=hyper(state),l=lab(state);
+    const obj={...state,roic:+h.roic.toFixed(4),margemLab:+l.margem.toFixed(4),breakevenP:+breakevenP(state).toFixed(4)};
+    const txt=JSON.stringify(obj,null,2);
+    const done=()=>{const b=E('btnCopy');b.textContent='Copiado ✓';setTimeout(()=>b.textContent='Copiar JSON',1200);};
+    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(txt).then(done).catch(()=>fallback(txt,done));}
+    else fallback(txt,done);
+  });
+  function fallback(txt,done){const ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done();}catch(e){alert(txt);}ta.remove();}
+
+  // ---- HEATMAP builder ----
+  function buildHeat(svgId,rows,cols,fmtRow,fmtCol,lo,mid,hi,axX,axY){
+    const svg=E(svgId); svg.innerHTML='';
+    const L=64,Tp=40,R=14,Bt=42, W=430,H=300;
+    const gW=W-L-R, gH=H-Tp-Bt, cw=gW/cols.length, ch=gH/rows.length;
+    svg.appendChild(el('text',{x:W/2,y:16,'text-anchor':'middle',class:'axtitle'})).textContent=axX;
+    const yt=el('text',{x:14,y:H/2,'text-anchor':'middle',class:'axtitle',transform:`rotate(-90,14,${H/2})`});svg.appendChild(yt);yt.textContent=axY;
+    const cells=[];
+    rows.forEach((rv,i)=>{
+      const ylab=el('text',{x:L-6,y:Tp+i*ch+ch/2+3,'text-anchor':'end',class:'axlab'});ylab.textContent=fmtRow(rv);svg.appendChild(ylab);
+      cells[i]=[];
+      cols.forEach((cv,j)=>{
+        if(i===0){const xl=el('text',{x:L+j*cw+cw/2,y:Tp+gH+14,'text-anchor':'middle',class:'axlab'});xl.textContent=fmtCol(cv);svg.appendChild(xl);}
+        const rect=el('rect',{x:L+j*cw+1,y:Tp+i*ch+1,width:cw-2,height:ch-2,rx:2,class:'cell'});
+        const tx=el('text',{x:L+j*cw+cw/2,y:Tp+i*ch+ch/2+3,'text-anchor':'middle',class:'cellval'});
+        svg.appendChild(rect);svg.appendChild(tx);
+        cells[i][j]={rect,tx,rv,cv};
+      });
+    });
+    const cursor=el('rect',{class:'cursor pulse',rx:3,width:cw,height:ch});svg.appendChild(cursor);
+    return {svg,cells,L,Tp,gW,gH,cw,ch,rows,cols,cursor};
+  }
+  const Prows=[7,6.5,6,5.5,5,4.5,4,3.5,3,2.5,2,1.5], Ucols=[0.4,0.5,0.6,0.7,0.8,0.9,1.0];
+  const Crows=[1,2,3,4,5,6,7], Tcols=[100,300,500,700,900,1100,1300,1500];
+  const HM1=buildHeat('hm1',Prows,Ucols,v=>usd2(v),v=>Math.round(v*100)+'%',-0.05,0.10,0.30,'utilização →','P ($/h)');
+  const HM2=buildHeat('hm2',Crows,Tcols,v=>usd0(v),v=>nf0.format(v),0,0.60,0.95,'throughput (tok/s) →','custo $/h');
+
+  // wire heatmap interactions
+  function wireHeat(HM,kindRowKey,kindColKey){
+    HM.cells.forEach(row=>row.forEach(cell=>{
+      cell.rect.addEventListener('click',()=>{
+        if(kindRowKey==='P'){ if(!dualLock){dualLock=true;applyLock();} setVal('P',cell.rv,true); setVal('U',cell.cv,true); }
+        else { if(dualLock){dualLock=false;applyLock();} setVal('C',cell.rv,true); setVal('T',cell.cv,true); }
+      });
+      cell.rect.addEventListener('mousemove',ev=>showTip(ev,HM===HM1
+        ? `P ${usd2(cell.rv)} · util ${Math.round(cell.cv*100)}%\nROIC ${pct1(cell._v)}`
+        : `custo ${usd2(cell.rv)} · ${nf0.format(cell.cv)} tok/s\nmargem ${pct1(cell._v)}`));
+      cell.rect.addEventListener('mouseleave',hideTip);
+    }));
+  }
+  wireHeat(HM1,'P','U'); wireHeat(HM2,'C','T');
+
+  const tip=E('tip');
+  function showTip(ev,txt){tip.textContent=txt;tip.style.whiteSpace='pre';tip.style.left=(ev.clientX+12)+'px';tip.style.top=(ev.clientY+12)+'px';tip.style.opacity=1;}
+  function hideTip(){tip.style.opacity=0;}
+
+  function paintHeat(HM,valFn,lo,mid,hi,curRow,curCol){
+    HM.cells.forEach(row=>row.forEach(cell=>{
+      const v=valFn(cell.rv,cell.cv); cell._v=v;
+      cell.rect.setAttribute('fill',ramp(v,lo,mid,hi));
+      cell.tx.textContent=(v*100).toFixed(0)+'%';
+    }));
+    // posiciona o cursor pelo ÍNDICE da célula (passos constantes) p/ pousar no centro do quadro
+    const nR=HM.rows.length, nC=HM.cols.length;
+    const rStep=nR>1?(HM.rows[1]-HM.rows[0]):1;
+    const cStep=nC>1?(HM.cols[1]-HM.cols[0]):1;
+    const idxR=(curRow-HM.rows[0])/rStep, idxC=(curCol-HM.cols[0])/cStep;
+    const clR=Math.max(0,Math.min(nR-1,idxR)), clC=Math.max(0,Math.min(nC-1,idxC));
+    HM.cursor.setAttribute('x',HM.L+clC*HM.cw);
+    HM.cursor.setAttribute('y',HM.Tp+clR*HM.ch);
+    const inRange = idxR>=-0.5 && idxR<=nR-0.5 && idxC>=-0.5 && idxC<=nC-0.5;
+    HM.cursor.setAttribute('opacity',inRange?1:0.45);
+  }
+
+  // ---- WATERFALL ----
+  function renderWF(h){
+    const svg=E('wf');svg.innerHTML='';
+    const W=480,H=250,L=8,R=8,Tp=10,Bt=34, pW=W-L-R, pH=H-Tp-Bt;
+    const imposto=h.ebit*state.tax;
+    const steps=[
+      {l:'Receita',v:h.receita,kind:'tot',c:'var(--cy)'},
+      {l:'−Deprec',v:-h.deprec,kind:'d',c:'var(--red)'},
+      {l:'−Energia',v:-h.energia,kind:'d',c:'var(--red)'},
+      {l:'−Opex',v:-h.opex,kind:'d',c:'var(--red)'},
+      {l:'EBIT',v:h.ebit,kind:'tot',c:h.ebit>=0?'#5aa9c9':'var(--red)'},
+      {l:'−Imposto',v:-imposto,kind:'d',c:'var(--red)'},
+      {l:'NOPAT',v:h.nopat,kind:'tot',c:h.nopat>=0?'var(--green)':'var(--red)'},
+    ];
+    // cumulativos
+    let run=0;const seg=[];
+    steps.forEach(s=>{
+      if(s.kind==='tot'){seg.push({...s,from:0,to:s.v});run=s.v;}
+      else{seg.push({...s,from:run,to:run+s.v});run=run+s.v;}
+    });
+    let vmax=Math.max(h.receita,0,...seg.map(s=>Math.max(s.from,s.to)));
+    let vmin=Math.min(0,...seg.map(s=>Math.min(s.from,s.to)));
+    if(vmax===vmin)vmax=vmin+1;
+    const pad=(vmax-vmin)*0.08; vmax+=pad; vmin-=pad;
+    const y=v=>Tp+(vmax-v)/(vmax-vmin)*pH;
+    const zeroY=y(0);
+    svg.appendChild(el('line',{x1:L,y1:zeroY,x2:W-R,y2:zeroY,stroke:'#2a3a4c','stroke-width':1}));
+    const bw=pW/steps.length, barW=bw*0.56;
+    seg.forEach((s,i)=>{
+      const x=L+i*bw+(bw-barW)/2;
+      const yt=y(Math.max(s.from,s.to)), yb=y(Math.min(s.from,s.to));
+      const rect=el('rect',{x,y:yt,width:barW,height:Math.max(1,yb-yt),fill:s.c,opacity:s.kind==='d'?0.72:0.95,rx:1.5});
+      const ttl=el('title',{});ttl.textContent=`${s.l}: ${usd0(s.v)}`;rect.appendChild(ttl);
+      svg.appendChild(rect);
+      if(i<seg.length-1){svg.appendChild(el('line',{x1:x+barW,y1:y(s.to),x2:x+bw+(bw-barW)/2,y2:y(s.to),stroke:'#46586c','stroke-dasharray':'2 2','stroke-width':1}));}
+      const lx=L+i*bw+bw/2;
+      const tv=el('text',{x:lx,y:(yt<zeroY?yt-3:yb+11),'text-anchor':'middle',fill:'#c7d2dd','font-size':9,'font-family':'var(--mono)'});tv.textContent=usd0(s.v);svg.appendChild(tv);
+      const tl=el('text',{x:lx,y:H-20,'text-anchor':'middle',fill:'var(--txt2)','font-size':9});tl.textContent=s.l;svg.appendChild(tl);
+    });
+  }
+
+  // ---- VALUE CHAIN ----
+  function renderChain(h,l){
+    const svg=E('chain');svg.innerHTML='';
+    const W=480,H=96,L=8,R=8,Tp=24, bh=34, pW=W-L-R;
+    const S=state.S, cost=l.cost, lucro=S-cost;
+    let hyperE=cost*h.margemEbit;            // EBIT do hyper embutido em cada $/Mtok
+    let hard=cost-hyperE;                     // custos duros de infra
+    const subsidy = hyperE<0;                 // hyper opera no prejuízo (EBIT/Mtok < 0)
+    if(subsidy){ hyperE=0; hard=cost; }       // não inflar 'Custos infra' além do custo
+    const base=Math.max(S,cost,1e-6), sc=pW/base;
+    let x=L;
+    const draw=(wVal,color,lbl,opacity)=>{
+      const w=Math.max(0,wVal*sc); if(w<=0) return;
+      const r=el('rect',{x,y:Tp,width:w,height:bh,fill:color,opacity:opacity||0.9});
+      const t=el('title',{});t.textContent=`${lbl}: ${usd2(wVal)}/Mtok`;r.appendChild(t);svg.appendChild(r);
+      if(w>34){const tx=el('text',{x:x+w/2,y:Tp+bh/2+4,'text-anchor':'middle',fill:'#0B0F14','font-size':10,'font-weight':600,'font-family':'var(--mono)'});tx.textContent=usd2(wVal);svg.appendChild(tx);}
+      x+=w;
+    };
+    if(lucro>=0){
+      draw(lucro,'var(--amber)','Lucro lab');
+      draw(hyperE,'var(--cy)','EBIT hyper');
+      draw(hard, subsidy?'#4a3a3a':'#39485a', subsidy?'Custos infra (hyper no prejuízo)':'Custos infra');
+    } else {
+      // custo > preço de venda: barra inteira = custo; a parte acima de S é prejuízo do lab
+      draw(hyperE,'var(--cy)','EBIT hyper');
+      draw(hard,'#39485a','Custos infra');
+      const x0=L+S*sc, x1=L+cost*sc;
+      const ov=el('rect',{x:x0,y:Tp,width:Math.max(0,x1-x0),height:bh,fill:'var(--red)',opacity:0.42});
+      const ot=el('title',{});ot.textContent=`Prejuízo lab: ${usd2(lucro)}/Mtok`;ov.appendChild(ot);svg.appendChild(ov);
+    }
+    // marca S (preço de venda) — sempre dentro da barra
+    const sx=L+Math.min(S,base)*sc;
+    svg.appendChild(el('line',{x1:sx,y1:Tp-6,x2:sx,y2:Tp+bh+6,stroke:'#fff','stroke-width':1.5}));
+    const st=el('text',{x:Math.min(Math.max(sx,20),W-44),y:Tp-9,'text-anchor':'middle',fill:'#fff','font-size':10,'font-family':'var(--mono)'});st.textContent='S='+usd2(S);svg.appendChild(st);
+    // legenda
+    const leg=[['Lucro lab','var(--amber)'],['EBIT hyper','var(--cy)'],['Custos infra','#39485a']];
+    if(lucro<0) leg.push(['Prejuízo lab','var(--red)']);
+    let lx=L;leg.forEach(([t,c])=>{svg.appendChild(el('rect',{x:lx,y:H-14,width:10,height:10,fill:c,rx:2}));const tt=el('text',{x:lx+14,y:H-5,fill:'var(--txt2)','font-size':10});tt.textContent=t;svg.appendChild(tt);lx+=t.length*6.4+30;});
+  }
+
+  // ---- THERMOMETER ----
+  function renderThermo(be){
+    const svg=E('thermo');svg.innerHTML='';
+    const W=480,H=72,L=10,R=10,y=30,bh=16, pW=W-L-R, pmin=0.5,pmax=8;
+    const x=p=>L+(Math.max(pmin,Math.min(pmax,p))-pmin)/(pmax-pmin)*pW;
+    const beX=x(be);
+    svg.appendChild(el('rect',{x:L,y,width:beX-L,height:bh,fill:'rgba(229,72,77,.35)',rx:3}));
+    svg.appendChild(el('rect',{x:beX,y,width:(L+pW)-beX,height:bh,fill:'rgba(46,204,113,.30)',rx:3}));
+    svg.appendChild(el('line',{x1:beX,y1:y-6,x2:beX,y2:y+bh+6,stroke:'var(--yellow)','stroke-dasharray':'3 2','stroke-width':1.5}));
+    const bl=el('text',{x:Math.min(Math.max(beX,40),W-46),y:y-9,'text-anchor':'middle',fill:'var(--yellow)','font-size':10,'font-family':'var(--mono)'});bl.textContent='breakeven '+usd2(be);svg.appendChild(bl);
+    // marcador P
+    const px=x(state.P);
+    svg.appendChild(el('path',{d:`M${px},${y+bh+4} l-6,9 l12,0 z`,fill:'#fff'}));
+    const pl=el('text',{x:Math.min(Math.max(px,30),W-30),y:y+bh+30,'text-anchor':'middle',fill:'#fff','font-size':10,'font-family':'var(--mono)'});pl.textContent='P '+usd2(state.P);svg.appendChild(pl);
+    // ticks
+    [0.5,2,4,6,8].forEach(p=>{const tx=el('text',{x:x(p),y:y-4,'text-anchor':'middle',fill:'#7a8da0','font-size':8.5,'font-family':'var(--mono)'});tx.textContent='$'+p;svg.appendChild(tx);});
+  }
+
+  // ---- VEREDITO + chip + AWS reading ----
+  function renderText(h,l,be){
+    const roic=h.roic,m=l.margem;
+    let cor = roic<0?'rgba(229,72,77,.16)':(roic<0.08?'rgba(244,196,48,.13)':'rgba(46,204,113,.13)');
+    E('veredito').style.background=cor;
+    let txt=`<b>Com GPU a ${usd2(state.P)}/h:</b> o dono da infra tem ROIC de <b>${pct1(roic)}</b> `;
+    txt += roic<0 ? `(<b style="color:var(--red)">abaixo</b> do breakeven ${usd2(be)} — destrói capital) ` : `(breakeven em ${usd2(be)}) `;
+    txt += `e o lab fica com <b>${pct1(m)}</b> de margem`;
+    txt += roic<0 ? ` — a infra <b>subsidia</b> o lab.` : (roic<0.08 ? ` — o lab leva quase tudo.` : ` — a infra começa a capturar valor.`);
+    E('veredito').innerHTML=txt;
+    const chip=E('chipRoic');
+    chip.textContent = roic>=0?`ROIC ${pct1(roic)} ✓`:`ROIC ${pct1(roic)} ✕`;
+    chip.style.background = roic<0?'rgba(229,72,77,.2)':(roic<0.08?'rgba(244,196,48,.18)':'rgba(46,204,113,.2)');
+    chip.style.color = roic<0?'var(--red)':(roic<0.08?'var(--yellow)':'var(--green)');
+    // AWS card
+    E('aws_rev').textContent=usd0(h.receita);
+    E('aws_ebit').textContent=usd0(h.ebit);
+    E('aws_mebit').textContent=pct1(h.margemEbit);
+    E('aws_roic').textContent=pct1(roic);
+    E('aws_lab').textContent=pct1(m);
+    const refRoic=hyper(BASE).roic;
+    E('aws_reading').innerHTML=`No preço atual de <b>${usd2(state.P)}/h</b>, uma GPU isolada renderia ROIC <b>${pct1(roic)}</b> para o dono da infra `
+      +`(vs ~${pct1(refRoic)} no caso base calibrado $2,65/h). Mas o cliente-lab que paga esse $/h vê a margem ficar em <b>${pct1(m)}</b>. `
+      +`O spread on-demand existe porque a utilização real é em burst, não fixa — por isso preço de lista ≠ preço realizado.`;
+  }
+
+  // ==================== v2: GERAÇÕES + COERÊNCIA ====================
+  const GEN = {
+    H100:  {I:50000, kw:1.22, Pc:2.65, Pr:[2.35,3.10], T:750,  Tr:[300,2000], life:5, econ:6, pol:7.0},
+    H200:  {I:55000, kw:1.22, Pc:2.90, Pr:[2.10,3.60], T:1050, Tr:[850,1200], life:5, econ:4, pol:3.95},
+    GB200: {I:60000, kw:2.06, Pc:3.20, Pr:[2.21,4.50], T:4500, Tr:[3000,6000],life:5, econ:3, pol:6.20},
+  };
+  let selectedGen='H100', selectedScen='base';
+  Object.keys(GEN).forEach(g=>{
+    const b=document.createElement('button'); b.className='genpill'; b.textContent=g; b.dataset.gen=g;
+    b.addEventListener('click',()=>applyGen(g)); E('genpills').appendChild(b);
+  });
+  function applyGen(g){
+    selectedGen=g; const G=GEN[g];
+    if(!dualLock){dualLock=true;applyLock();}
+    state={...state, I:G.I, kw:G.kw, P:G.Pc, C:G.Pc, T:G.T, life:G.life};
+    CTRLS.forEach(c=>{if(refs[c.k]){refs[c.k].r.value=state[c.k];refs[c.k].n.value=state[c.k];}});
+    activePreset=-1; paintPresets(); paintGen(); render();
+  }
+  function paintGen(){[...E('genpills').children].forEach(b=>b.classList.toggle('active',b.dataset.gen===selectedGen));}
+
+  function coherenceWarnings(){
+    const G=GEN[selectedGen], W=[], inb=(v,lo,hi)=>v>=lo&&v<=hi;
+    if(state.P < G.Pr[0]*0.9) W.push(`P de ${usd2(state.P)} <b>abaixo</b> da faixa committed do ${selectedGen} [${usd2(G.Pr[0])}–${usd2(G.Pr[1])}] — parece outra geração`);
+    if(state.P > G.Pr[1]*1.25) W.push(`P de ${usd2(state.P)} <b>acima</b> da faixa committed do ${selectedGen}`);
+    if(!inb(state.kw, G.kw*0.85, G.kw*1.15)) W.push(`potência ${nf2.format(state.kw)} kW fora do ${selectedGen} (~${nf2.format(G.kw)}) — <b>mistura de geração</b>`);
+    if(!inb(state.I, G.I*0.8, G.I*1.2)) W.push(`capital ${usd0(state.I)} fora do ${selectedGen} (~${usd0(G.I)})`);
+    if(!inb(state.T, G.Tr[0]*0.7, G.Tr[1]*1.3)) W.push(`throughput ${nf0.format(state.T)} fora do ${selectedGen} [${nf0.format(G.Tr[0])}–${nf0.format(G.Tr[1])}] — não combine T de uma geração com capex/potência de outra`);
+    if(state.P >= G.pol*0.8) W.push(`P ≈ on-demand de lista (${usd2(G.pol)}): on-demand público <b>não</b> é committed realizado`);
+    return W;
+  }
+  function renderCoherence(){
+    const W=coherenceWarnings(), box=E('coh');
+    if(!W.length){box.style.display='none';return;}
+    box.style.display='block';
+    box.innerHTML='<b>⚠ Coerência ('+selectedGen+'):</b> '+W.join(' · ');
+  }
+
+  // ==================== v2: LAB EM CAMADAS ====================
+  function labLayers(){
+    const cc=lab(state).cost, Snet=state.S*state.rf, loaded=cc*state.htm/state.sof;
+    const mg=(rev,cost)=>rev>0?(rev-cost)/rev:0;
+    return {cc, Snet, loaded, L1:mg(state.S,cc), L2:mg(Snet,cc), L3:mg(Snet,loaded)};
+  }
+  function renderLayers(){
+    const L=labLayers(), box=E('layers'); box.innerHTML='';
+    [['Compute-only @ lista (antes de overhead)',L.L1,'var(--amber)'],
+     ['Compute-only @ net realized (−descontos)',L.L2,'#c98f2e'],
+     ['Fully-loaded @ net realized (+overhead)',L.L3,'#9a7340']].forEach(([name,v,col])=>{
+      const r=document.createElement('div'); r.className='layrow';
+      r.innerHTML=`<span class="lname">${name}</span><span class="laybar" style="width:${Math.max(0,Math.min(1,v))*150}px;background:${col}"></span><span class="lval" style="color:${v<0?'var(--red)':col}">${pct1(v)}</span>`;
+      box.appendChild(r);
+    });
+    const note=document.createElement('div'); note.style.cssText='font-size:10.5px;color:var(--txt2);margin-top:5px;line-height:1.4';
+    note.innerHTML=`O headline é <b>compute-only output-token margin before serving overhead</b> — não "margem do lab". net=lista×realização(${pct1(state.rf)}); fully-loaded=custo×${nf2.format(state.htm)}÷${pct1(state.sof)}.`;
+    box.appendChild(note);
+  }
+
+  // ==================== v2: COORTE / VINTAGE ====================
+  const SCEN={ bull:{pdec:0.05,u1:0.85,udec:0.03,el:null}, base:{pdec:0.15,u1:0.82,udec:0.08,el:null}, bear:{pdec:0.30,u1:0.70,udec:0.15,el:4} };
+  Object.keys(SCEN).forEach(s=>{
+    const b=document.createElement('button'); b.className='scenpill'; b.textContent=s; b.dataset.scen=s;
+    b.addEventListener('click',()=>{selectedScen=s;paintScen();render();}); E('scenpills').appendChild(b);
+  });
+  function paintScen(){[...E('scenpills').children].forEach(b=>b.classList.toggle('active',b.dataset.scen===selectedScen));}
+  function npv(rate,cfs){let s=0;for(let t=0;t<cfs.length;t++)s+=cfs[t]/Math.pow(1+rate,t);return s;}
+  function irr(cfs){let lo=-0.95,hi=5,flo=npv(lo,cfs),fhi=npv(hi,cfs);if(flo*fhi>0)return null;for(let i=0;i<200;i++){const m=(lo+hi)/2,fm=npv(m,cfs);if(Math.abs(fm)<1e-7)return m;if(flo*fm<0){hi=m;}else{lo=m;flo=fm;}}return(lo+hi)/2;}
+  function cohort(){
+    const G=GEN[selectedGen], sc=SCEN[selectedScen];
+    const I=state.I, acct=state.life, econ=sc.el||G.econ, dep=I/acct, disc=0.12;
+    const rows=[], cfs=[-I];
+    for(let t=1;t<=econ;t++){
+      const P=state.P*Math.pow(1-sc.pdec,t-1), u=Math.max(0,sc.u1-sc.udec*(t-1)), dpt=t<=acct?dep:0;
+      const uP=Math.max(0,Math.min(state.uPower,u+(state.uPower-sc.u1)));
+      const rec=P*8760*u, en=state.kw*8760*uP*state.e, op=rec*state.opex;
+      const ebit=rec-dpt-en-op, nopat=ebit*(1-state.tax);
+      rows.push({t,roic:I?nopat/I:0}); cfs.push(nopat+dpt);
+    }
+    return {rows, irr:irr(cfs), npv:npv(disc,cfs), econ, acct, residual:Math.max(0,I*(1-Math.min(econ,acct)/acct))};
+  }
+  function renderCohort(){
+    const co=cohort(), svg=E('cohort'); svg.innerHTML='';
+    const W=480,H=168,L=42,R=12,Tp=14,Bt=26, pW=W-L-R, pH=H-Tp-Bt;
+    const rs=co.rows.map(r=>r.roic), vmax=Math.max(0.25,...rs), vmin=Math.min(-0.10,...rs);
+    const x=t=>L+(t-1)/Math.max(1,co.econ-1)*pW, y=v=>Tp+(vmax-v)/(vmax-vmin)*pH;
+    svg.appendChild(el('line',{x1:L,y1:y(0),x2:W-R,y2:y(0),stroke:'#2a3a4c','stroke-width':1}));
+    [vmax,0,vmin].forEach(v=>{const t=el('text',{x:L-6,y:y(v)+3,'text-anchor':'end',fill:'#7a8da0','font-size':9,'font-family':'var(--mono)'});t.textContent=(v*100).toFixed(0)+'%';svg.appendChild(t);});
+    let d=''; co.rows.forEach((r,i)=>{d+=(i?'L':'M')+x(r.t)+','+y(r.roic);});
+    svg.appendChild(el('path',{d,fill:'none',stroke:'var(--cy)','stroke-width':2}));
+    co.rows.forEach(r=>{
+      svg.appendChild(el('circle',{cx:x(r.t),cy:y(r.roic),r:3,fill:r.roic<0?'var(--red)':'var(--cy)'}));
+      const tl=el('text',{x:x(r.t),y:H-10,'text-anchor':'middle',fill:'var(--txt2)','font-size':9});tl.textContent='a'+r.t;svg.appendChild(tl);
+      const vt=el('text',{x:x(r.t),y:y(r.roic)-6,'text-anchor':'middle',fill:r.roic<0?'var(--red)':'#9fd9ef','font-size':8.5,'font-family':'var(--mono)'});vt.textContent=(r.roic*100).toFixed(0)+'%';svg.appendChild(vt);
+    });
+    E('cohortMeta').innerHTML=`<b>${selectedGen}</b> · coorte ${co.econ}a · <b>IRR ${co.irr==null?'n/a':pct1(co.irr)}</b> · NPV@12% ${usd0(co.npv)}`
+      +(co.residual>1?` · <span style="color:var(--red)">capital não recuperado ${usd0(co.residual)} (econ ${co.econ}a &lt; contábil ${co.acct}a)</span>`:'')
+      +`. ROIC ano-1 ≠ IRR de coorte (foto de pico vs ciclo).`;
+  }
+
+  // ---- RENDER ----
+  function render(){
+    const h=hyper(state),l=lab(state),be=breakevenP(state);
+    E('k_roic').textContent=pct1(h.roic); E('k_roic').className='big '+(h.roic<0?'':'cy');
+    E('k_roic').style.color = h.roic<0?'var(--red)':(h.roic<0.08?'var(--yellow)':'var(--cy)');
+    E('k_ebit').textContent=usd0(h.ebit);
+    E('k_margemEbit').textContent=pct1(h.margemEbit);
+    E('k_receita').textContent=usd0(h.receita);
+    E('k_deprec').textContent=usd0(h.deprec);
+    E('k_energia').textContent=usd0(h.energia);
+    E('k_opex').textContent=usd0(h.opex);
+    E('k_margem').textContent=pct1(l.margem); E('k_margem').style.color=l.margem<0?'var(--red)':'var(--amber)';
+    E('k_cost').textContent=usd2(l.cost)+'/Mtok';
+    E('k_lucro').textContent=usd2(l.lucro)+'/Mtok';
+    E('k_S').textContent=usd2(state.S)+'/Mtok';
+    E('k_T').textContent=nf0.format(state.T)+' tok/s';
+    E('k_C').textContent=usd2(state.C)+'/h';
+    E('k_price').innerHTML=usd2(state.P)+'<small>$/GPU-h</small>';
+    // deltas
+    CTRLS.forEach(c=>{const d=state[c.k]-BASE[c.k]; E('d_'+c.k).textContent = Math.abs(d)<1e-9?'base':'Δ '+(d>0?'+':'')+(Math.abs(d)>=100?nf0.format(d):nf2.format(d));});
+    paintHeat(HM1,(P,U)=>hyper({...state,P,U}).roic,-0.05,0.10,0.30,state.P,state.U);
+    paintHeat(HM2,(C,T)=>lab({...state,C,T}).margem,0,0.60,0.95,state.C,state.T);
+    renderWF(h); renderChain(h,l); renderThermo(be); renderText(h,l,be);
+    renderCoherence(); renderLayers(); renderCohort();
+  }
+
+  applyLock(); paintPresets(); activePreset=0; paintPresets(); paintGen(); paintScen(); render();
+})();
+</script>
+</body>
+</html>
