@@ -172,6 +172,7 @@
     <div class="col controls">
       <div class="grp-title" style="color:var(--txt);background:rgba(255,255,255,.05)">Geração (preset coerente)</div>
       <div id="genpills" class="genbar"></div>
+      <div id="paritystrip" style="font-family:var(--mono);font-size:10px;color:var(--txt2);line-height:1.7;margin:-6px 0 10px" title="Sanity check de paridade: em mercado sold-out, a geração nova precifica em paridade-ou-prêmio de ROIC vs a velha — ninguém compra a nova pra ganhar menos"></div>
       <div class="grp-title grp-hyper">Hyperscaler (dono da infra)</div>
       <div id="ctrls-hyper"></div>
       <div class="grp-title grp-lab">AI Lab (consome compute)</div>
@@ -605,9 +606,9 @@ if (typeof document!=='undefined') (function(){
   // SYNC: espelha assumptions.yaml › generations (test_engine.py::test_dashboard_gen_sync verifica)
   const GEN = {
     H100:  {I:50000, Ir:[45000,55000],  kw:1.22, kwr:[1.05,1.45], Pc:2.65, Pr:[2.35,3.10], T:750,   Tr:[250,1500],   life:5, econ:6, pol:7.0},
-    H200:  {I:55000, Ir:[44000,65000],  kw:1.22, kwr:[1.05,1.35], Pc:2.90, Pr:[2.10,3.60], T:1200,  Tr:[500,1900],   life:5, econ:4, pol:10.6},
-    GB200: {I:60000, Ir:[54000,90000],  kw:2.06, kwr:[1.9,2.2],   Pc:3.20, Pr:[2.21,4.50], T:3500,  Tr:[1800,5500],  life:5, econ:3, pol:6.20},
-    VR200: {I:120000,Ir:[90000,135000], kw:3.4,  kwr:[2.9,3.7],   Pc:4.80, Pr:[3.80,6.00], T:10000, Tr:[7000,15500], life:5, econ:3, pol:11.0},
+    H200:  {I:55000, Ir:[44000,65000],  kw:1.22, kwr:[1.05,1.35], Pc:2.90, Pr:[2.10,3.60], T:1200,  Tr:[500,1900],   life:5, econ:5, pol:10.6},
+    GB200: {I:60000, Ir:[54000,90000],  kw:2.06, kwr:[1.9,2.2],   Pc:3.20, Pr:[2.21,4.50], T:3500,  Tr:[1800,5500],  life:5, econ:5, pol:6.20},
+    VR200: {I:120000,Ir:[90000,135000], kw:3.4,  kwr:[2.9,3.7],   Pc:6.40, Pr:[4.80,7.50], T:10000, Tr:[7000,15500], life:5, econ:5, pol:11.0},
   };
   let selectedGen='H100', selectedScen='base';
   Object.keys(GEN).forEach(g=>{
@@ -651,6 +652,25 @@ if (typeof document!=='undefined') (function(){
     activePreset=-1; paintPresets(); paintGen(); render();
   }
   function paintGen(){[...E('genpills').children].forEach(b=>b.classList.toggle('active',b.dataset.gen===selectedGen));}
+
+  // sanity de PARIDADE: ROIC ano-1 de cada geração ao committed central (premissas globais dos sliders)
+  function roicAtCommitted(G){
+    return hyper({P:G.Pc,U:state.U,uPower:state.uPower,I:G.I,life:G.life,kw:G.kw,e:state.e,opex:state.opex,tax:state.tax}).roic;
+  }
+  function parityPrice(G,target){
+    const ebit=target*G.I/(1-state.tax);
+    const receita=(ebit + G.I/G.life + G.kw*8760*state.uPower*state.e)/(1-state.opex);
+    return receita/(8760*state.U);
+  }
+  function renderParity(){
+    const ref=roicAtCommitted(GEN.H100);
+    const parts=Object.keys(GEN).map(g=>{
+      const r=roicAtCommitted(GEN[g]), pp=parityPrice(GEN[g],ref);
+      const fail=GEN[g].Pc<pp*0.85;
+      return `<span style="color:${fail?'var(--red)':'var(--txt2)'}" title="${g}: paridade de ROIC c/ H100 = ${usd2(pp)}">${g} ${(r*100).toFixed(1)}%${fail?'⚠':''}</span>`;
+    });
+    E('paritystrip').innerHTML='ROIC a1 @ committed: '+parts.join(' · ');
+  }
 
   function coherenceWarnings(){
     const G=GEN[selectedGen], W=[], inb=(v,lo,hi)=>v>=lo&&v<=hi;
@@ -923,7 +943,7 @@ if (typeof document!=='undefined') (function(){
     paintHeat(HM1,(P,U)=>hyper({...state,P,U}).roic,-0.05,0.10,0.30,state.P,state.U, pinA?pinA.st.P:null, pinA?pinA.st.U:null);
     paintHeat(HM2,(C,T)=>lab({...state,C,T}).margem,0,0.60,0.95,state.C,state.T, pinA?pinA.st.C:null, pinA?pinA.st.T:null);
     renderWF(h); renderChain(h,l); renderThermo(be); renderText(h,l,be);
-    renderCoherence(); renderLayers(); renderCohort(); renderTornado(); renderCompare(); saveHash();
+    renderCoherence(); renderLayers(); renderCohort(); renderTornado(); renderCompare(); renderParity(); saveHash();
   }
 
   syncGenUI(); loadHash(); applyLock();
