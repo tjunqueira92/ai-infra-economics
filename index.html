@@ -15,7 +15,7 @@
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
   body{background:var(--bg);color:var(--txt);font-family:var(--sans);font-size:14px;overflow:hidden}
-  .app{display:grid;grid-template-rows:auto auto 1fr;height:100vh}
+  .app{display:grid;grid-template-rows:auto auto auto 1fr;height:100vh}
 
   /* ---- COMMAND BAR ---- */
   .cmd{display:flex;align-items:center;gap:14px;padding:8px 16px;background:#0E141C;border-bottom:1px solid var(--border);min-height:56px;flex-wrap:wrap}
@@ -43,7 +43,7 @@
   .veredito b{font-weight:600}
 
   /* ---- BODY GRID ---- */
-  .body{display:grid;grid-template-columns:300px 1fr 452px;overflow:hidden;min-height:0}
+  .body{display:grid;grid-row:4;grid-template-columns:300px 1fr 452px;overflow:hidden;min-height:0}
   .col{overflow-y:auto;padding:14px;min-height:0}
   .col.controls{border-right:1px solid var(--border)}
   .col.heat{border-left:1px solid var(--border)}
@@ -140,6 +140,10 @@
   .layrow .lname{flex:1;color:var(--txt2)}
   .layrow .laybar{height:13px;border-radius:3px;flex:none}
   .layrow .lval{width:54px;text-align:right;color:var(--txt)}
+  .cursor.ghost{stroke:#9aa7b4;stroke-dasharray:4 3;animation:none}
+  .rngband{height:3px;border-radius:2px;margin-top:2px;background:transparent}
+  .sub.cmp{color:#9aa7b4;font-size:11px;border-top:1px dashed #2a3a4c;margin-top:4px;padding-top:4px}
+  .minihdr{font-size:10px;letter-spacing:.6px;text-transform:uppercase;color:var(--txt2);margin:10px 0 6px;opacity:.8}
 </style>
 </head>
 <body>
@@ -151,6 +155,7 @@
     <div class="cmd-right">
       <div class="toggle on" id="dualToggle"><span class="sw"></span><span>Dualidade C=P</span></div>
       <span class="chip" id="chipRoic">ROIC ?</span>
+      <button class="btn" id="btnPin" title="Congela o cenário atual como referência A para comparação">Fixar A</button>
       <button class="btn" id="btnReset" title="Atalho: R">Resetar</button>
       <button class="btn" id="btnCopy">Copiar JSON</button>
     </div>
@@ -184,6 +189,7 @@
           <div class="sub"><span>(−) Depreciação</span><span id="k_deprec">—</span></div>
           <div class="sub"><span>(−) Energia</span><span id="k_energia">—</span></div>
           <div class="sub"><span>(−) Opex</span><span id="k_opex">—</span></div>
+          <div class="sub cmp" id="cmpH" style="display:none"></div>
         </div>
         <div class="divider">
           <div class="arrow r">RECEITA →</div>
@@ -200,12 +206,15 @@
           <div class="sub"><span>Preço de venda / Mtok</span><span id="k_S">—</span></div>
           <div class="sub"><span>Throughput</span><span id="k_T">—</span></div>
           <div class="sub"><span>Custo GPU-hora</span><span id="k_C">—</span></div>
+          <div class="sub"><span>Fully-loaded @ net*</span><span id="k_L3">—</span></div>
+          <div class="sub cmp" id="cmpL" style="display:none"></div>
         </div>
       </div>
 
       <div class="viz"><h4>Cascata de P&amp;L por GPU/ano — onde a receita vira NOPAT</h4><svg id="wf" viewBox="0 0 480 250"></svg></div>
       <div class="viz"><h4>Cadeia de valor de cada $/Mtok vendido — quem fica com a margem</h4><svg id="chain" viewBox="0 0 480 96"></svg></div>
       <div class="viz"><h4>Termômetro de breakeven — ROIC = 0 do hyperscaler</h4><svg id="thermo" viewBox="0 0 480 72"></svg></div>
+      <div class="viz"><h4>Tornado — qual alavanca move mais (varrendo a faixa calibrada de cada premissa)</h4><svg id="tornado" viewBox="0 0 480 330"></svg></div>
       <div class="viz"><h4>Coorte / vintage — ROIC por ano <span class="scenpills" id="scenpills"></span></h4><svg id="cohort" viewBox="0 0 480 168"></svg><div id="cohortMeta" style="font-size:11px;color:var(--txt2);margin-top:4px"></div></div>
       <div class="viz"><h4>* Margem do lab em camadas — nunca "93% = margem do lab"</h4><div id="layers"></div></div>
 
@@ -276,7 +285,7 @@ if (typeof module!=='undefined' && module.exports){ module.exports={hyper,lab,br
 
 if (typeof document!=='undefined') (function(){
   const SVGNS="http://www.w3.org/2000/svg";
-  const BASE = {P:2.65,U:0.82,uPower:0.85,I:50000,life:5,kw:1.22,e:0.08,opex:0.15,tax:0.17,C:2.65,T:750,S:15,rf:0.66,sof:0.45,htm:1.0};
+  const BASE = {P:2.65,U:0.82,uPower:0.85,I:50000,life:5,kw:1.22,e:0.08,opex:0.15,tax:0.17,C:2.65,T:750,S:15,rf:0.66,sof:0.52,htm:1.0};
   let state = {...BASE};
   let dualLock = true;
 
@@ -301,30 +310,33 @@ if (typeof document!=='undefined') (function(){
 
   // ---- CONTROLES ----
   const CTRLS=[
-    {k:'P',g:'hyper',lab:'P · Preço GPU-hora ($/h)',min:0.5,max:8,step:0.05,fmt:usd2,acc:'var(--cy)'},
+    {k:'P',g:'hyper',lab:'P · Preço GPU-hora ($/h)',min:0.5,max:12,step:0.05,fmt:usd2,acc:'var(--cy)'},
     {k:'U',g:'hyper',lab:'U_sold · Utilização vendida (receita)',min:0.3,max:1,step:0.01,fmt:pct1,acc:'var(--cy)'},
     {k:'uPower',g:'hyper',lab:'U_power · Util. de energia (runtime)',min:0.3,max:1,step:0.01,fmt:pct1,acc:'var(--cy)'},
-    {k:'I',g:'hyper',lab:'Capital investido / GPU ($)',min:20000,max:110000,step:1000,fmt:usd0,acc:'var(--cy)'},
+    {k:'I',g:'hyper',lab:'Capital investido / GPU ($)',min:20000,max:140000,step:1000,fmt:usd0,acc:'var(--cy)'},
     {k:'life',g:'hyper',lab:'Vida de depreciação (anos)',min:2,max:8,step:1,fmt:v=>v+'a',acc:'var(--cy)'},
-    {k:'kw',g:'hyper',lab:'Potência efetiva (kW/GPU)',min:0.5,max:2.5,step:0.1,fmt:v=>nf2.format(v)+' kW',acc:'var(--cy)'},
+    {k:'kw',g:'hyper',lab:'Potência efetiva (kW/GPU)',min:0.5,max:4,step:0.05,fmt:v=>nf2.format(v)+' kW',acc:'var(--cy)'},
     {k:'e',g:'hyper',lab:'Energia ($/kWh)',min:0.03,max:0.25,step:0.01,fmt:usd2,acc:'var(--cy)'},
     {k:'opex',g:'hyper',lab:'Opex (% da receita)',min:0,max:0.4,step:0.01,fmt:pct1,acc:'var(--cy)'},
     {k:'tax',g:'hyper',lab:'Alíquota de imposto',min:0,max:0.4,step:0.01,fmt:pct1,acc:'var(--cy)'},
-    {k:'C',g:'lab',lab:'Custo GPU-hora p/ lab ($/h)',min:0.5,max:8,step:0.05,fmt:usd2,acc:'var(--amber)',lock:true},
+    {k:'C',g:'lab',lab:'Custo GPU-hora p/ lab ($/h)',min:0.5,max:12,step:0.05,fmt:usd2,acc:'var(--amber)',lock:true},
     {k:'T',g:'lab',lab:'Throughput vendável (tok/s/GPU)',min:50,max:2000,step:10,fmt:v=>nf0.format(v),acc:'var(--amber)'},
     {k:'S',g:'lab',lab:'S · Preço de venda lista ($/Mtok)',min:1,max:40,step:0.5,fmt:usd2,acc:'var(--amber)'},
-    {k:'rf',g:'lab',lab:'Realização (net/lista)',min:0.3,max:1,step:0.01,fmt:pct1,acc:'var(--amber)'},
+    {k:'rf',g:'lab',lab:'Realização (net/lista)',min:0.3,max:1,step:0.01,fmt:pct1,acc:'var(--amber)',hdr:'Camadas de margem (painel ↓)'},
     {k:'sof',g:'lab',lab:'Fração vendável (serving overhead)',min:0.2,max:1,step:0.01,fmt:pct1,acc:'var(--amber)'},
     {k:'htm',g:'lab',lab:'Mult. tokens ocultos (API=1)',min:1,max:4,step:0.1,fmt:v=>nf2.format(v)+'×',acc:'var(--amber)'},
   ];
   const refs={};
   CTRLS.forEach(c=>{
+    const parent=E(c.g==='hyper'?'ctrls-hyper':'ctrls-lab');
+    if(c.hdr){const h=document.createElement('div');h.className='minihdr';h.textContent=c.hdr;parent.appendChild(h);}
     const wrap=document.createElement('div');
     wrap.className='ctrl'+(c.lock?' lab-c':'');
     wrap.innerHTML=`<div class="lab"><span>${c.lab}${c.lock?' <span class="lockbadge" id="lk_C">🔒</span>':''}</span><span class="delta" id="d_${c.k}"></span></div>
       <div class="row"><input type="range" id="r_${c.k}" min="${c.min}" max="${c.max}" step="${c.step}" value="${BASE[c.k]}" style="accent-color:${c.acc}">
-      <input type="number" id="n_${c.k}" min="${c.min}" max="${c.max}" step="${c.step}" value="${BASE[c.k]}"></div>`;
-    E(c.g==='hyper'?'ctrls-hyper':'ctrls-lab').appendChild(wrap);
+      <input type="number" id="n_${c.k}" min="${c.min}" max="${c.max}" step="${c.step}" value="${BASE[c.k]}"></div>
+      <div class="rngband" id="rb_${c.k}" title="faixa calibrada da premissa (assumptions.yaml)"></div>`;
+    parent.appendChild(wrap);
     refs[c.k]={cfg:c,wrap,r:wrap.querySelector('#r_'+c.k),n:wrap.querySelector('#n_'+c.k)};
     const clamp=v=>Math.max(c.min,Math.min(c.max,v));
     refs[c.k].r.addEventListener('input',ev=>{const v=parseFloat(ev.target.value); if(isNaN(v))return; setVal(c.k,clamp(v),true);});
@@ -373,7 +385,7 @@ if (typeof document!=='undefined') (function(){
     state={...state,...p.s};
     CTRLS.forEach(c=>{refs[c.k].r.value=state[c.k];refs[c.k].n.value=state[c.k];});
     activePreset=i; paintPresets();
-    selectedGen='H100'; paintGen();   // presets de preço são todos geração H100
+    selectedGen='H100'; paintGen(); syncGenUI();   // presets de preço são todos geração H100
     if(p.aws) E('awsCard').open=true;
     render();
   }
@@ -411,13 +423,14 @@ if (typeof document!=='undefined') (function(){
         cells[i][j]={rect,tx,rv,cv};
       });
     });
+    const ghost=el('rect',{class:'cursor ghost',rx:3,width:cw,height:ch,opacity:0});svg.appendChild(ghost);
     const cursor=el('rect',{class:'cursor pulse',rx:3,width:cw,height:ch});svg.appendChild(cursor);
-    return {svg,cells,L,Tp,gW,gH,cw,ch,rows,cols,cursor};
+    return {svg,cells,L,Tp,gW,gH,cw,ch,rows,cols,cursor,ghost};
   }
   const Prows=[7,6.5,6,5.5,5,4.5,4,3.5,3,2.5,2,1.5], Ucols=[0.4,0.5,0.6,0.7,0.8,0.9,1.0];
   const Crows=[1,2,3,4,5,6,7], Tcols=[100,300,500,700,900,1100,1300,1500];
   const HM1=buildHeat('hm1',Prows,Ucols,v=>usd2(v),v=>Math.round(v*100)+'%',-0.05,0.10,0.30,'utilização →','P ($/h)');
-  const HM2=buildHeat('hm2',Crows,Tcols,v=>usd0(v),v=>nf0.format(v),0,0.60,0.95,'throughput (tok/s) →','custo $/h');
+  let HM2=buildHeat('hm2',Crows,Tcols,v=>usd0(v),v=>nf0.format(v),0,0.60,0.95,'throughput (tok/s) →','custo $/h');
 
   // wire heatmap interactions
   function wireHeat(HM,kindRowKey,kindColKey){
@@ -438,22 +451,26 @@ if (typeof document!=='undefined') (function(){
   function showTip(ev,txt){tip.textContent=txt;tip.style.whiteSpace='pre';tip.style.left=(ev.clientX+12)+'px';tip.style.top=(ev.clientY+12)+'px';tip.style.opacity=1;}
   function hideTip(){tip.style.opacity=0;}
 
-  function paintHeat(HM,valFn,lo,mid,hi,curRow,curCol){
+  function placeMarker(HM,rect,row,col,dimOpacity){
+    // posiciona pelo ÍNDICE da célula (passos constantes) p/ pousar no centro do quadro
+    const nR=HM.rows.length, nC=HM.cols.length;
+    const rStep=nR>1?(HM.rows[1]-HM.rows[0]):1, cStep=nC>1?(HM.cols[1]-HM.cols[0]):1;
+    const idxR=(row-HM.rows[0])/rStep, idxC=(col-HM.cols[0])/cStep;
+    const clR=Math.max(0,Math.min(nR-1,idxR)), clC=Math.max(0,Math.min(nC-1,idxC));
+    rect.setAttribute('x',HM.L+clC*HM.cw); rect.setAttribute('y',HM.Tp+clR*HM.ch);
+    rect.setAttribute('width',HM.cw); rect.setAttribute('height',HM.ch);
+    const inRange = idxR>=-0.5 && idxR<=nR-0.5 && idxC>=-0.5 && idxC<=nC-0.5;
+    rect.setAttribute('opacity',inRange?1:dimOpacity);
+  }
+  function paintHeat(HM,valFn,lo,mid,hi,curRow,curCol,gRow,gCol){
     HM.cells.forEach(row=>row.forEach(cell=>{
       const v=valFn(cell.rv,cell.cv); cell._v=v;
       cell.rect.setAttribute('fill',ramp(v,lo,mid,hi));
       cell.tx.textContent=(v*100).toFixed(0)+'%';
     }));
-    // posiciona o cursor pelo ÍNDICE da célula (passos constantes) p/ pousar no centro do quadro
-    const nR=HM.rows.length, nC=HM.cols.length;
-    const rStep=nR>1?(HM.rows[1]-HM.rows[0]):1;
-    const cStep=nC>1?(HM.cols[1]-HM.cols[0]):1;
-    const idxR=(curRow-HM.rows[0])/rStep, idxC=(curCol-HM.cols[0])/cStep;
-    const clR=Math.max(0,Math.min(nR-1,idxR)), clC=Math.max(0,Math.min(nC-1,idxC));
-    HM.cursor.setAttribute('x',HM.L+clC*HM.cw);
-    HM.cursor.setAttribute('y',HM.Tp+clR*HM.ch);
-    const inRange = idxR>=-0.5 && idxR<=nR-0.5 && idxC>=-0.5 && idxC<=nC-0.5;
-    HM.cursor.setAttribute('opacity',inRange?1:0.45);
+    placeMarker(HM,HM.cursor,curRow,curCol,0.45);
+    if(gRow!=null){ placeMarker(HM,HM.ghost,gRow,gCol,0.3); HM.ghost.setAttribute('opacity',Math.min(0.6,+HM.ghost.getAttribute('opacity')||0.6)); HM.ghost.style.display=''; }
+    else HM.ghost.style.display='none';
   }
 
   // ---- WATERFALL ----
@@ -540,19 +557,21 @@ if (typeof document!=='undefined') (function(){
   // ---- THERMOMETER ----
   function renderThermo(be){
     const svg=E('thermo');svg.innerHTML='';
-    const W=480,H=72,L=10,R=10,y=30,bh=16, pW=W-L-R, pmin=0.5,pmax=8;
+    const W=480,H=72,L=10,R=10,y=30,bh=16, pW=W-L-R, pmin=0.5,pmax=12;
     const x=p=>L+(Math.max(pmin,Math.min(pmax,p))-pmin)/(pmax-pmin)*pW;
     const beX=x(be);
     svg.appendChild(el('rect',{x:L,y,width:beX-L,height:bh,fill:'rgba(229,72,77,.35)',rx:3}));
     svg.appendChild(el('rect',{x:beX,y,width:(L+pW)-beX,height:bh,fill:'rgba(46,204,113,.30)',rx:3}));
     svg.appendChild(el('line',{x1:beX,y1:y-6,x2:beX,y2:y+bh+6,stroke:'var(--yellow)','stroke-dasharray':'3 2','stroke-width':1.5}));
     const bl=el('text',{x:Math.min(Math.max(beX,40),W-46),y:y-9,'text-anchor':'middle',fill:'var(--yellow)','font-size':10,'font-family':'var(--mono)'});bl.textContent='breakeven '+usd2(be);svg.appendChild(bl);
+    // marcador A (comparação), atrás do marcador P
+    if(pinA){const ax=x(pinA.st.P);svg.appendChild(el('path',{d:`M${ax},${y+bh+4} l-6,9 l12,0 z`,fill:'#8a97a4',opacity:0.7}));}
     // marcador P
     const px=x(state.P);
     svg.appendChild(el('path',{d:`M${px},${y+bh+4} l-6,9 l12,0 z`,fill:'#fff'}));
     const pl=el('text',{x:Math.min(Math.max(px,30),W-30),y:y+bh+30,'text-anchor':'middle',fill:'#fff','font-size':10,'font-family':'var(--mono)'});pl.textContent='P '+usd2(state.P);svg.appendChild(pl);
     // ticks
-    [0.5,2,4,6,8].forEach(p=>{const tx=el('text',{x:x(p),y:y-4,'text-anchor':'middle',fill:'#7a8da0','font-size':8.5,'font-family':'var(--mono)'});tx.textContent='$'+p;svg.appendChild(tx);});
+    [0.5,2,4,6,8,10,12].forEach(p=>{const tx=el('text',{x:x(p),y:y-4,'text-anchor':'middle',fill:'#7a8da0','font-size':8.5,'font-family':'var(--mono)'});tx.textContent='$'+p;svg.appendChild(tx);});
   }
 
   // ---- VEREDITO + chip + AWS reading ----
@@ -582,20 +601,51 @@ if (typeof document!=='undefined') (function(){
   }
 
   // ==================== v2: GERAÇÕES + COERÊNCIA ====================
+  // SYNC: espelha assumptions.yaml › generations (test_engine.py::test_dashboard_gen_sync verifica)
   const GEN = {
-    H100:  {I:50000, kw:1.22, Pc:2.65, Pr:[2.35,3.10], T:750,  Tr:[300,2000], life:5, econ:6, pol:7.0},
-    H200:  {I:55000, kw:1.22, Pc:2.90, Pr:[2.10,3.60], T:1050, Tr:[850,1200], life:5, econ:4, pol:3.95},
-    GB200: {I:60000, kw:2.06, Pc:3.20, Pr:[2.21,4.50], T:4500, Tr:[3000,6000],life:5, econ:3, pol:6.20},
+    H100:  {I:50000, Ir:[45000,55000],  kw:1.22, kwr:[1.05,1.45], Pc:2.65, Pr:[2.35,3.10], T:750,   Tr:[300,2000],   life:5, econ:6, pol:7.0},
+    H200:  {I:55000, Ir:[44000,65000],  kw:1.22, kwr:[1.05,1.35], Pc:2.90, Pr:[2.10,3.60], T:1050,  Tr:[850,1200],   life:5, econ:4, pol:10.6},
+    GB200: {I:60000, Ir:[54000,90000],  kw:2.06, kwr:[1.9,2.2],   Pc:3.20, Pr:[2.21,4.50], T:4500,  Tr:[3000,6000],  life:5, econ:3, pol:6.20},
+    VR200: {I:120000,Ir:[90000,135000], kw:3.4,  kwr:[2.9,3.7],   Pc:4.80, Pr:[3.80,6.00], T:13500, Tr:[9000,20000], life:5, econ:3, pol:11.0},
   };
   let selectedGen='H100', selectedScen='base';
   Object.keys(GEN).forEach(g=>{
     const b=document.createElement('button'); b.className='genpill'; b.textContent=g; b.dataset.gen=g;
+    if(g==='VR200') b.title='Vera Rubin — PRÉ-RAMPA (4T26): preços/throughput são projeção, não mercado observado';
     b.addEventListener('click',()=>applyGen(g)); E('genpills').appendChild(b);
   });
+  // faixa calibrada de cada premissa (assumptions.yaml); P/C/T/I/kw variam por geração
+  function RNG(k){
+    const G=GEN[selectedGen];
+    return {P:G.Pr, C:G.Pr, T:G.Tr, I:G.Ir, kw:G.kwr,
+            U:[0.55,0.90], uPower:[0.60,0.95], life:[4,6], e:[0.055,0.11], opex:[0.08,0.22],
+            tax:[0.15,0.20], S:[5,25], rf:[0.50,0.78], sof:[0.35,0.70], htm:[1,4]}[k]||null;
+  }
+  function TcolsFor(G){ const lo=G.Tr[0], hi=G.Tr[1], n=8, st=(hi-lo)/(n-1);
+    return Array.from({length:n},(_,i)=>Math.round(lo+i*st)); }
+  function rebuildHM2(){
+    HM2=buildHeat('hm2',Crows,TcolsFor(GEN[selectedGen]),v=>usd0(v),v=>nf0.format(v),0,0.60,0.95,'throughput (tok/s) →','custo $/h');
+    wireHeat(HM2,'C','T');
+  }
+  function refreshBands(){
+    CTRLS.forEach(c=>{
+      const band=document.getElementById('rb_'+c.k); if(!band) return;
+      const r=RNG(c.k);
+      if(!r){band.style.background='transparent';return;}
+      const p1=Math.max(0,Math.min(100,(r[0]-c.min)/(c.max-c.min)*100));
+      const p2=Math.max(0,Math.min(100,(r[1]-c.min)/(c.max-c.min)*100));
+      band.style.background=`linear-gradient(90deg,transparent ${p1}%,rgba(46,204,113,.45) ${p1}%,rgba(46,204,113,.45) ${p2}%,transparent ${p2}%)`;
+    });
+  }
+  function syncGenUI(){ const G=GEN[selectedGen];
+    refs.T.r.max=refs.T.n.max=Math.round(G.Tr[1]*1.2);   // range do slider T acompanha a geração
+    rebuildHM2(); refreshBands();
+  }
   function applyGen(g){
     selectedGen=g; const G=GEN[g];
     if(!dualLock){dualLock=true;applyLock();}
     state={...state, I:G.I, kw:G.kw, P:G.Pc, C:G.Pc, T:G.T, life:G.life};
+    syncGenUI();
     CTRLS.forEach(c=>{if(refs[c.k]){refs[c.k].r.value=state[c.k];refs[c.k].n.value=state[c.k];}});
     activePreset=-1; paintPresets(); paintGen(); render();
   }
@@ -603,12 +653,17 @@ if (typeof document!=='undefined') (function(){
 
   function coherenceWarnings(){
     const G=GEN[selectedGen], W=[], inb=(v,lo,hi)=>v>=lo&&v<=hi;
-    if(state.P < G.Pr[0]*0.9) W.push(`P de ${usd2(state.P)} <b>abaixo</b> da faixa committed do ${selectedGen} [${usd2(G.Pr[0])}–${usd2(G.Pr[1])}] — parece outra geração`);
+    if(state.P < G.Pr[0]*0.9){
+      const cand=Object.keys(GEN).filter(og=>og!==selectedGen && state.P>=GEN[og].Pr[0]*0.9 && state.P<=GEN[og].Pr[1]*1.1);
+      W.push(`P de ${usd2(state.P)} <b>abaixo</b> da faixa committed do ${selectedGen} [${usd2(G.Pr[0])}–${usd2(G.Pr[1])}]`+(cand.length?` — compatível com ${cand.join('/')}`:''));
+    }
     if(state.P > G.Pr[1]*1.25) W.push(`P de ${usd2(state.P)} <b>acima</b> da faixa committed do ${selectedGen}`);
-    if(!inb(state.kw, G.kw*0.85, G.kw*1.15)) W.push(`potência ${nf2.format(state.kw)} kW fora do ${selectedGen} (~${nf2.format(G.kw)}) — <b>mistura de geração</b>`);
-    if(!inb(state.I, G.I*0.8, G.I*1.2)) W.push(`capital ${usd0(state.I)} fora do ${selectedGen} (~${usd0(G.I)})`);
+    if(!inb(state.kw, G.kwr[0]*0.85, G.kwr[1]*1.15)) W.push(`potência ${nf2.format(state.kw)} kW fora da faixa do ${selectedGen} [${nf2.format(G.kwr[0])}–${nf2.format(G.kwr[1])}] — <b>mistura de geração</b>`);
+    if(!inb(state.I, G.Ir[0]*0.85, G.Ir[1]*1.15)) W.push(`capital ${usd0(state.I)} fora da faixa do ${selectedGen} [${usd0(G.Ir[0])}–${usd0(G.Ir[1])}]`);
     if(!inb(state.T, G.Tr[0]*0.7, G.Tr[1]*1.3)) W.push(`throughput ${nf0.format(state.T)} fora do ${selectedGen} [${nf0.format(G.Tr[0])}–${nf0.format(G.Tr[1])}] — não combine T de uma geração com capex/potência de outra`);
-    if(state.P >= G.pol*0.8) W.push(`P ≈ on-demand de lista (${usd2(G.pol)}): on-demand público <b>não</b> é committed realizado`);
+    if(state.P >= G.pol*0.8 && state.P > G.Pr[1]*1.05) W.push(`P ≈ on-demand de lista (${usd2(G.pol)}): on-demand público <b>não</b> é committed realizado`);
+    if(state.U > state.uPower) W.push(`U_sold ${pct1(state.U)} &gt; U_power ${pct1(state.uPower)}: horas vendidas sem energia contabilizada — <b>ROIC inflado</b>`);
+    if(state.P >= G.Pr[1]*0.85 && state.U >= 0.80) W.push(`pico cíclico: P e U_sold ambos perto do topo — risco de <b>reversão conjunta</b> (2027/28) que comprime o ROIC mais que cada um isolado`);
     return W;
   }
   function renderCoherence(){
@@ -618,12 +673,14 @@ if (typeof document!=='undefined') (function(){
     box.innerHTML='<b>⚠ Coerência ('+selectedGen+'):</b> '+W.join(' · ');
   }
 
-  // ==================== v2: LAB EM CAMADAS ====================
-  function labLayers(){
-    const cc=lab(state).cost, Snet=state.S*state.rf, loaded=cc*state.htm/state.sof;
+  // ==================== v2: LAB EM CAMADAS + REALITY CHECK $/GW ====================
+  const BENCH_GW=50e9;  // benchmark externo de monetização $/GW/ano — ANEDÓTICO/não-verificado, só sensibilidade (assumptions.yaml › external_benchmark_usd_per_gw)
+  function labLayersFor(st){
+    const cc=lab(st).cost, Snet=st.S*st.rf, loaded=cc*st.htm/st.sof;
     const mg=(rev,cost)=>rev>0?(rev-cost)/rev:0;
-    return {cc, Snet, loaded, L1:mg(state.S,cc), L2:mg(Snet,cc), L3:mg(Snet,loaded)};
+    return {cc, Snet, loaded, L1:mg(st.S,cc), L2:mg(Snet,cc), L3:mg(Snet,loaded)};
   }
+  function labLayers(){ return labLayersFor(state); }
   function renderLayers(){
     const L=labLayers(), box=E('layers'); box.innerHTML='';
     [['Compute-only @ lista (antes de overhead)',L.L1,'var(--amber)'],
@@ -633,40 +690,70 @@ if (typeof document!=='undefined') (function(){
       r.innerHTML=`<span class="lname">${name}</span><span class="laybar" style="width:${Math.max(0,Math.min(1,v))*150}px;background:${col}"></span><span class="lval" style="color:${v<0?'var(--red)':col}">${pct1(v)}</span>`;
       box.appendChild(r);
     });
+    // reality check $/GW: unit economics por-GPU-SERVINDO -> $/GW/ano vs benchmark de mercado
+    const gpusGw=1e6/state.kw, custoGw=gpusGw*state.C*8760*state.U;
+    const gw=document.createElement('div'); gw.style.cssText='font-size:10.5px;color:var(--txt2);margin-top:7px;line-height:1.5;border-top:1px dashed #2a3a4c;padding-top:5px;font-family:var(--mono)';
+    const fmtB=v=>'$'+nf0.format(Math.round(v/1e9))+'B';
+    const linhas=[['L1',L.L1],['L3',L.L3]].map(([tag,m])=>{
+      if(m>=1) return `${tag}: ∞`;
+      const rev=custoGw/(1-m), share=BENCH_GW/rev;
+      const irreal=share<0.2;
+      return `${tag}: ${fmtB(rev)}/GW-servindo (bench se ~${share>1?'>100%':Math.round(share*100)+'%'} da frota)`+(irreal?' <b style="color:var(--red)">⚠ irreal</b>':'');
+    });
+    gw.innerHTML=`Reality check $/GW (bench ${fmtB(BENCH_GW)}, anedótico): custo ${fmtB(custoGw)}/GW · ${linhas.join(' · ')}`;
+    box.appendChild(gw);
     const note=document.createElement('div'); note.style.cssText='font-size:10.5px;color:var(--txt2);margin-top:5px;line-height:1.4';
-    note.innerHTML=`O headline é <b>compute-only output-token margin before serving overhead</b> — não "margem do lab". net=lista×realização(${pct1(state.rf)}); fully-loaded=custo×${nf2.format(state.htm)}÷${pct1(state.sof)}.`;
+    note.innerHTML=`O headline é <b>compute-only output-token margin before serving overhead</b> — não "margem do lab". net=lista×realização(${pct1(state.rf)}); fully-loaded=custo×${nf2.format(state.htm)}÷${pct1(state.sof)} (sof = só overhead residual não contido em T: prefill×retries).`;
     box.appendChild(note);
   }
 
   // ==================== v2: COORTE / VINTAGE ====================
-  const SCEN={ bull:{pdec:0.05,u1:0.85,udec:0.03,el:null}, base:{pdec:0.15,u1:0.82,udec:0.08,el:null}, bear:{pdec:0.30,u1:0.70,udec:0.15,el:4} };
+  // SYNC: espelha assumptions.yaml › scenarios + discount_rate (test_engine.py::test_dashboard_gen_sync)
+  const DISC=0.12;
+  const SCEN={ bull:{pdec:0.05,udec:0.03,el:null,tip:'bull: P −5%/a · U −3pp/a · vida econ da geração'},
+               base:{pdec:0.15,udec:0.08,el:null,tip:'base: P −15%/a · U −8pp/a · vida econ da geração'},
+               bear:{pdec:0.30,udec:0.15,el:4,tip:'bear: P −30%/a · U −15pp/a · vida econ min(4, geração)'} };
   Object.keys(SCEN).forEach(s=>{
-    const b=document.createElement('button'); b.className='scenpill'; b.textContent=s; b.dataset.scen=s;
+    const b=document.createElement('button'); b.className='scenpill'; b.textContent=s; b.dataset.scen=s; b.title=SCEN[s].tip;
     b.addEventListener('click',()=>{selectedScen=s;paintScen();render();}); E('scenpills').appendChild(b);
   });
   function paintScen(){[...E('scenpills').children].forEach(b=>b.classList.toggle('active',b.dataset.scen===selectedScen));}
   function npv(rate,cfs){let s=0;for(let t=0;t<cfs.length;t++)s+=cfs[t]/Math.pow(1+rate,t);return s;}
   function irr(cfs){let lo=-0.95,hi=5,flo=npv(lo,cfs),fhi=npv(hi,cfs);if(flo*fhi>0)return null;for(let i=0;i<200;i++){const m=(lo+hi)/2,fm=npv(m,cfs);if(Math.abs(fm)<1e-7)return m;if(flo*fm<0){hi=m;}else{lo=m;flo=fm;}}return(lo+hi)/2;}
-  function cohort(){
-    const G=GEN[selectedGen], sc=SCEN[selectedScen];
-    const I=state.I, acct=state.life, econ=sc.el||G.econ, dep=I/acct, disc=0.12;
+  function cohortFor(scen){
+    // ancorada nos SLIDERS (ano-1 = state.U/state.P); o cenário fornece só a TRAJETÓRIA
+    const G=GEN[selectedGen], sc=SCEN[scen];
+    const I=state.I, acct=state.life, econ=Math.min(G.econ, sc.el||G.econ), dep=I/acct;
+    const residual=Math.max(0,I*(1-Math.min(econ,acct)/acct));
     const rows=[], cfs=[-I];
     for(let t=1;t<=econ;t++){
-      const P=state.P*Math.pow(1-sc.pdec,t-1), u=Math.max(0,sc.u1-sc.udec*(t-1)), dpt=t<=acct?dep:0;
-      const uP=Math.max(0,Math.min(state.uPower,u+(state.uPower-sc.u1)));
+      const P=state.P*Math.pow(1-sc.pdec,t-1), u=Math.max(0,state.U-sc.udec*(t-1)), dpt=t<=acct?dep:0;
+      const uP=Math.max(u, Math.min(state.uPower, u+(state.uPower-state.U)));  // nunca < u_sold
       const rec=P*8760*u, en=state.kw*8760*uP*state.e, op=rec*state.opex;
       const ebit=rec-dpt-en-op, nopat=ebit*(1-state.tax);
-      rows.push({t,roic:I?nopat/I:0}); cfs.push(nopat+dpt);
+      rows.push({t,roic:I?nopat/I:0});
+      let cf=nopat+dpt;
+      if(t===econ && residual>0) cf+=state.tax*residual;  // tax shield do writeoff (econ<contábil)
+      cfs.push(cf);
     }
-    return {rows, irr:irr(cfs), npv:npv(disc,cfs), econ, acct, residual:Math.max(0,I*(1-Math.min(econ,acct)/acct))};
+    return {rows, irr:irr(cfs), npv:npv(DISC,cfs), econ, acct, residual};
   }
   function renderCohort(){
-    const co=cohort(), svg=E('cohort'); svg.innerHTML='';
+    const all={}; Object.keys(SCEN).forEach(s=>{all[s]=cohortFor(s);});
+    const co=all[selectedScen], svg=E('cohort'); svg.innerHTML='';
     const W=480,H=168,L=42,R=12,Tp=14,Bt=26, pW=W-L-R, pH=H-Tp-Bt;
-    const rs=co.rows.map(r=>r.roic), vmax=Math.max(0.25,...rs), vmin=Math.min(-0.10,...rs);
-    const x=t=>L+(t-1)/Math.max(1,co.econ-1)*pW, y=v=>Tp+(vmax-v)/(vmax-vmin)*pH;
+    const allR=Object.values(all).flatMap(c=>c.rows.map(r=>r.roic));
+    const vmax=Math.max(0.25,...allR), vmin=Math.min(-0.10,...allR);
+    const maxE=Math.max(...Object.values(all).map(c=>c.econ));
+    const x=t=>L+(t-1)/Math.max(1,maxE-1)*pW, y=v=>Tp+(vmax-v)/(vmax-vmin)*pH;
     svg.appendChild(el('line',{x1:L,y1:y(0),x2:W-R,y2:y(0),stroke:'#2a3a4c','stroke-width':1}));
     [vmax,0,vmin].forEach(v=>{const t=el('text',{x:L-6,y:y(v)+3,'text-anchor':'end',fill:'#7a8da0','font-size':9,'font-family':'var(--mono)'});t.textContent=(v*100).toFixed(0)+'%';svg.appendChild(t);});
+    // fantasmas dos outros cenários (envelope de risco num olhar)
+    Object.keys(SCEN).forEach(s=>{
+      if(s===selectedScen) return;
+      let d=''; all[s].rows.forEach((r,i)=>{d+=(i?'L':'M')+x(r.t)+','+y(r.roic);});
+      svg.appendChild(el('path',{d,fill:'none',stroke:'#5a6a7a','stroke-width':1.2,'stroke-dasharray':'4 3',opacity:0.4}));
+    });
     let d=''; co.rows.forEach((r,i)=>{d+=(i?'L':'M')+x(r.t)+','+y(r.roic);});
     svg.appendChild(el('path',{d,fill:'none',stroke:'var(--cy)','stroke-width':2}));
     co.rows.forEach(r=>{
@@ -674,9 +761,94 @@ if (typeof document!=='undefined') (function(){
       const tl=el('text',{x:x(r.t),y:H-10,'text-anchor':'middle',fill:'var(--txt2)','font-size':9});tl.textContent='a'+r.t;svg.appendChild(tl);
       const vt=el('text',{x:x(r.t),y:y(r.roic)-6,'text-anchor':'middle',fill:r.roic<0?'var(--red)':'#9fd9ef','font-size':8.5,'font-family':'var(--mono)'});vt.textContent=(r.roic*100).toFixed(0)+'%';svg.appendChild(vt);
     });
-    E('cohortMeta').innerHTML=`<b>${selectedGen}</b> · coorte ${co.econ}a · <b>IRR ${co.irr==null?'n/a':pct1(co.irr)}</b> · NPV@12% ${usd0(co.npv)}`
-      +(co.residual>1?` · <span style="color:var(--red)">capital não recuperado ${usd0(co.residual)} (econ ${co.econ}a &lt; contábil ${co.acct}a)</span>`:'')
+    const trio=Object.keys(SCEN).map(s=>{const v=all[s].irr; const t=`${s} ${v==null?'n/a':pct1(v)}`; return s===selectedScen?`<b>${t}</b>`:t;}).join(' · ');
+    E('cohortMeta').innerHTML=`<b>${selectedGen}</b> · coorte ${co.econ}a (ano-1 = sliders) · IRR: ${trio} · NPV@${Math.round(DISC*100)}% ${usd0(co.npv)}`
+      +(co.residual>1?` · <span style="color:var(--red)">writeoff ${usd0(co.residual)} (econ ${co.econ}a &lt; contábil ${co.acct}a, shield fiscal no ano final)</span>`:'')
       +`. ROIC ano-1 ≠ IRR de coorte (foto de pico vs ciclo).`;
+  }
+
+  // ==================== v2: TORNADO (ranking de alavancas) ====================
+  function renderTornado(){
+    const svg=E('tornado'); svg.innerHTML='';
+    const W=480, L=118, Rm=52, pW=W-L-Rm, rowH=17;
+    const roic0=hyper(state).roic, m0=labLayers().L3;
+    const mk=(keys,baseV,evalFn)=>keys.map(k=>{
+      const r=RNG(k); if(!r||state[k]==null) return null;
+      const lo=evalFn({...state,[k]:r[0]}), hi=evalFn({...state,[k]:r[1]});
+      return {k, lo, hi, span:Math.abs(hi-lo)};
+    }).filter(Boolean).sort((a,b)=>b.span-a.span);
+    const hyperBars=mk(['P','U','uPower','I','life','kw','e','opex','tax'],roic0,st=>hyper(st).roic);
+    const labBars=mk(['C','T','S','rf','sof','htm'],m0,st=>labLayersFor(st).L3);
+    const groups=[['ROIC do hyperscaler (atual '+pct1(roic0)+')',hyperBars,roic0,'var(--cy)'],
+                  ['Margem fully-loaded do lab (atual '+pct1(m0)+')',labBars,m0,'var(--amber)']];
+    let yPos=14;
+    const allVals=[...hyperBars,...labBars].flatMap(b=>[b.lo,b.hi]);
+    groups.forEach(([title,bars,base,color])=>{
+      const t=el('text',{x:4,y:yPos,fill:'var(--txt2)','font-size':10});t.textContent=title;svg.appendChild(t);
+      yPos+=8;
+      const vmin=Math.min(base,...bars.map(b=>Math.min(b.lo,b.hi)));
+      const vmax=Math.max(base,...bars.map(b=>Math.max(b.lo,b.hi)));
+      const xx=v=>L+(v-vmin)/Math.max(1e-9,vmax-vmin)*pW;
+      const bx=xx(base);
+      const y0=yPos, y1=yPos+bars.length*rowH;
+      svg.appendChild(el('line',{x1:bx,y1:y0,x2:bx,y2:y1,stroke:'#4a5a6c','stroke-dasharray':'2 2','stroke-width':1}));
+      bars.forEach((b,i)=>{
+        const yy=yPos+i*rowH;
+        const lbl=el('text',{x:L-6,y:yy+11,'text-anchor':'end',fill:'var(--txt2)','font-size':9.5,'font-family':'var(--mono)'});
+        lbl.textContent={P:'P $/h',U:'U_sold',uPower:'U_power',I:'capital',life:'vida',kw:'kW',e:'$/kWh',opex:'opex%',tax:'imposto',C:'C $/h'+(dualLock?' (=P)':''),T:'tok/s',S:'S lista',rf:'realiz.',sof:'vendável',htm:'ocultos'}[b.k]||b.k;
+        svg.appendChild(lbl);
+        const xlo=xx(Math.min(b.lo,b.hi)), xhi=xx(Math.max(b.lo,b.hi));
+        svg.appendChild(el('rect',{x:xlo,y:yy+3,width:Math.max(1,xhi-xlo),height:10,fill:color,opacity:0.55,rx:2}));
+        const vt=el('text',{x:xhi+4,y:yy+11,fill:'#c7d2dd','font-size':8.5,'font-family':'var(--mono)'});
+        vt.textContent='±'+((b.span/2)*100).toFixed(1)+'pp';svg.appendChild(vt);
+      });
+      yPos=y1+18;
+    });
+    svg.setAttribute('viewBox',`0 0 ${W} ${yPos-6}`);
+  }
+
+  // ==================== v2: COMPARAÇÃO A/B ====================
+  let pinA=null;
+  E('btnPin').addEventListener('click',()=>{
+    if(pinA){ pinA=null; E('btnPin').textContent='Fixar A'; }
+    else {
+      const h=hyper(state), l=lab(state);
+      pinA={st:{...state}, roic:h.roic, margem:l.margem, L3:labLayers().L3};
+      E('btnPin').textContent='Limpar A';
+    }
+    render();
+  });
+  function renderCompare(){
+    const on=!!pinA;
+    E('cmpH').style.display=on?'':'none'; E('cmpL').style.display=on?'':'none';
+    if(!on) return;
+    const h=hyper(state), L3=labLayers().L3;
+    const dR=(h.roic-pinA.roic)*100, dM=(L3-pinA.L3)*100;
+    E('cmpH').innerHTML=`<span>A: ROIC ${pct1(pinA.roic)} @ ${usd2(pinA.st.P)}/h</span><span style="color:${dR>=0?'var(--green)':'var(--red)'}">Δ ${dR>=0?'+':''}${dR.toFixed(1)}pp</span>`;
+    E('cmpL').innerHTML=`<span>A: fully-loaded ${pct1(pinA.L3)}</span><span style="color:${dM>=0?'var(--green)':'var(--red)'}">Δ ${dM>=0?'+':''}${dM.toFixed(1)}pp</span>`;
+  }
+
+  // ==================== v2: PERMALINK (#hash, funciona em file://) ====================
+  let hashTimer=null;
+  function saveHash(){
+    clearTimeout(hashTimer);
+    hashTimer=setTimeout(()=>{
+      const diff={}; Object.keys(BASE).forEach(k=>{if(Math.abs(state[k]-BASE[k])>1e-9)diff[k]=state[k];});
+      const o={d:diff,g:selectedGen,s:selectedScen,l:dualLock?1:0};
+      try{history.replaceState(null,'','#'+encodeURIComponent(JSON.stringify(o)));}catch(e){}
+    },400);
+  }
+  function loadHash(){
+    try{
+      if(!location.hash || location.hash.length<3) return;
+      const o=JSON.parse(decodeURIComponent(location.hash.slice(1)));
+      if(o.g && GEN[o.g]) selectedGen=o.g;
+      if(o.s && SCEN[o.s]) selectedScen=o.s;
+      dualLock=o.l!==0;
+      if(o.d) Object.keys(o.d).forEach(k=>{if(k in BASE)state[k]=o.d[k];});
+      syncGenUI();
+      CTRLS.forEach(c=>{if(refs[c.k]){refs[c.k].r.value=state[c.k];refs[c.k].n.value=state[c.k];}});
+    }catch(e){/* hash inválido: ignora */}
   }
 
   // ---- RENDER ----
@@ -697,15 +869,27 @@ if (typeof document!=='undefined') (function(){
     E('k_T').textContent=nf0.format(state.T)+' tok/s';
     E('k_C').textContent=usd2(state.C)+'/h';
     E('k_price').innerHTML=usd2(state.P)+'<small>$/GPU-h</small>';
-    // deltas
-    CTRLS.forEach(c=>{const d=state[c.k]-BASE[c.k]; E('d_'+c.k).textContent = Math.abs(d)<1e-9?'base':'Δ '+(d>0?'+':'')+(Math.abs(d)>=100?nf0.format(d):nf2.format(d));});
-    paintHeat(HM1,(P,U)=>hyper({...state,P,U}).roic,-0.05,0.10,0.30,state.P,state.U);
-    paintHeat(HM2,(C,T)=>lab({...state,C,T}).margem,0,0.60,0.95,state.C,state.T);
+    const LY=labLayers();
+    E('k_L3').textContent=pct1(LY.L3); E('k_L3').style.color=LY.L3<0?'var(--red)':'#c98f2e';
+    // deltas + elasticidade (+10% da premissa -> Δpp no ROIC ou na margem fully-loaded)
+    CTRLS.forEach(c=>{
+      const d=state[c.k]-BASE[c.k];
+      E('d_'+c.k).textContent = Math.abs(d)<1e-9?'base':'Δ '+(d>0?'+':'')+(Math.abs(d)>=100?nf0.format(d):nf2.format(d));
+      const v=state[c.k]; if(!v) return;
+      const pert={...state,[c.k]:v*1.1}; if(c.k==='P'&&dualLock)pert.C=v*1.1;
+      const isHyper=['P','U','uPower','I','life','kw','e','opex','tax'].includes(c.k);
+      const dd=isHyper?(hyper(pert).roic-h.roic)*100:(labLayersFor(pert).L3-LY.L3)*100;
+      refs[c.k].wrap.title=`+10% nesta premissa → ${isHyper?'ROIC':'margem fully-loaded'} ${dd>=0?'+':''}${dd.toFixed(1)}pp`;
+    });
+    paintHeat(HM1,(P,U)=>hyper({...state,P,U}).roic,-0.05,0.10,0.30,state.P,state.U, pinA?pinA.st.P:null, pinA?pinA.st.U:null);
+    paintHeat(HM2,(C,T)=>lab({...state,C,T}).margem,0,0.60,0.95,state.C,state.T, pinA?pinA.st.C:null, pinA?pinA.st.T:null);
     renderWF(h); renderChain(h,l); renderThermo(be); renderText(h,l,be);
-    renderCoherence(); renderLayers(); renderCohort();
+    renderCoherence(); renderLayers(); renderCohort(); renderTornado(); renderCompare(); saveHash();
   }
 
-  applyLock(); paintPresets(); activePreset=0; paintPresets(); paintGen(); paintScen(); render();
+  syncGenUI(); loadHash(); applyLock();
+  activePreset=(location.hash&&location.hash.length>2)?-1:0;
+  paintPresets(); paintGen(); paintScen(); render();
 })();
 </script>
 </body>
